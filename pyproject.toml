@@ -1,0 +1,107 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "async-trading-engine"
+version = "1.0.0"
+description = "Async algorithmic trading engine for IG spread betting, driven by a time-series foundation model"
+license = { file = "LICENSE" }
+authors = [{ name = "protereus" }]
+requires-python = ">=3.12"
+dependencies = [
+    "pydantic>=2.0",
+    "pydantic-settings>=2.14.2",  # >=2.14.2 clears GHSA-4xgf-cpjx-pc3j (secrets_dir symlink read)
+    "python-dotenv",
+    "aiohttp",
+    "orjson",
+    "lightstreamer-client-lib>=2.2.2",
+    # Kronos / TopK runtime deps
+    "torch>=2.0.0",
+    "einops>=0.8.0",
+    "safetensors>=0.4.0",
+    "huggingface_hub>=0.33.0",
+    # Lower bound matches the dev-group pin so dev and prod resolve the same
+    # numpy major (2.x); uv.lock already resolves 2.4.4 everywhere.
+    "numpy>=2.4.4",
+    "pandas>=2.0.0",
+    "defusedxml>=0.7.1",
+    # Imported directly by bot.strategy._kronos_progress (progress-bar shim);
+    # otherwise only transitively present via huggingface_hub/torch.
+    "tqdm>=4.66.0",
+]
+
+[project.optional-dependencies]
+analysis = [
+    "matplotlib>=3.7.0",
+]
+webgui = [
+    "fastapi>=0.110",
+    "uvicorn>=0.27",
+    "jinja2>=3.1",
+]
+finbert = [
+    # Local ProsusAI/finbert via ONNX runtime — opt-in only (CPU contends
+    # with Kronos).  Run `uv sync --extra finbert` to install.
+    "transformers>=4.40",
+    "optimum[onnxruntime]>=1.20",
+]
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[tool.uv.sources]
+torch = [{ index = "pytorch-cpu" }]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/bot"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+exclude = []
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "ASYNC"]
+
+[tool.mypy]
+strict = true
+python_version = "3.12"
+mypy_path = "src"
+
+# Third-party packages with no PEP-561 stubs and no usable types-* package
+# on PyPI. Check for an installable stub package before adding anything here.
+[[tool.mypy.overrides]]
+module = [
+    "lightstreamer",
+    "lightstreamer.*",
+    "model",
+    "model.*",
+    "optimum",
+    "optimum.*",
+    "transformers",
+    "transformers.*",
+]
+ignore_missing_imports = true
+disable_error_code = ["import-untyped", "import-not-found"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+markers = [
+    "preflight: pre-go-live validation gate. Run with `uv run pytest -m preflight` to exercise the live-readiness checks as a single deterministic pass.",
+]
+
+[dependency-groups]
+dev = [
+    "pytest",
+    "pytest-asyncio",
+    "mypy",
+    "ruff",
+    # PEP-561 stub packages for runtime deps (bump alongside the package).
+    "types-defusedxml",
+    "pandas-stubs",
+    "types-tqdm",
+]

@@ -1,0 +1,38 @@
+# Example systemd unit — adjust user and paths for your host, then:
+#   sudo cp deploy/trading-bot.service /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now trading-bot
+[Unit]
+Description=async-trading-engine
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=600
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=trader
+WorkingDirectory=/opt/async-trading-engine
+EnvironmentFile=/opt/async-trading-engine/.env
+ExecStart=/opt/async-trading-engine/.venv/bin/python -u -m bot.main
+
+# Restart policy: only restart on crash, not on a clean exit.
+Restart=on-failure
+RestartSec=30
+
+# Graceful-shutdown contract: TradingBot.shutdown() has a bounded worst-case
+# wall-time of ~55 s (order cancels, task cancellation, state save, feed/client
+# closes, broker logout, final alert). TimeoutStopSec sits above that budget so
+# systemd never SIGKILLs mid-shutdown — that risks a lost state save and
+# orphaned broker positions.
+KillSignal=SIGTERM
+TimeoutStopSec=75
+
+MemoryMax=4G
+NoNewPrivileges=true
+PrivateTmp=true
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=trading-bot
+
+[Install]
+WantedBy=multi-user.target

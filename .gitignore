@@ -1,0 +1,30 @@
+# Secrets — never commit
+.env
+
+# Python
+__pycache__/
+*.pyc
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.venv/
+dist/
+*.egg-info/
+
+# Runtime data — market history and bot state stay local
+*.db
+*.sqlite3
+*.db-wal
+*.db-shm
+bot_state.json
+rerank_status.json
+journal/
+kronos_ab/
+
+# Broker session token cache
+.ig_session_cache.json
+
+# Coverage artifacts
+.coverage
+coverage.xml
+htmlcov/
