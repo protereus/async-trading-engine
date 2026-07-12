@@ -90,8 +90,12 @@ disable_error_code = ["import-untyped", "import-not-found"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+# Chaos scenarios hit a live IG demo session through a fault-injection proxy;
+# they are opt-in only. An explicit `-m chaos` overrides this default.
+addopts = '-m "not chaos"'
 markers = [
     "preflight: pre-go-live validation gate. Run with `uv run pytest -m preflight` to exercise the live-readiness checks as a single deterministic pass.",
+    "chaos: live streaming fault-injection suite (toxiproxy + IG demo). Run with `uv run pytest -m chaos` — see docs/CHAOS_TESTING.md.",
 ]
 
 [dependency-groups]
