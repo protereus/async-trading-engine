@@ -75,3 +75,6 @@ identifiers, or raw log lines — there is nothing to sanitise by design):
 - Markets: run against 24/7 instruments (the default epics are crypto) or
   during market hours — a closed, tickless market starves the heartbeat and
   the suite cannot distinguish injected faults from natural silence.
+  Crypto epics are used for *streaming only*: IG restricts crypto **dealing**
+  to professional accounts, but retail demo accounts can subscribe to the
+  price stream, and this suite never places an order.
