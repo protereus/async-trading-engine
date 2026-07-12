@@ -1,0 +1,157 @@
+{
+  "generated_utc": "2026-07-12T09:04:07+00:00",
+  "engine_commit": "ddac700",
+  "environment": {
+    "bot_env": "demo",
+    "epics": [
+      "CS.D.BITCOIN.TODAY.IP",
+      "CS.D.ETHUSD.TODAY.IP"
+    ],
+    "heartbeat_timeout_s": 10.0,
+    "heartbeat_initial_grace_s": 60.0,
+    "proxy": "toxiproxy (TLS pass-through, streaming only)"
+  },
+  "scenarios": [
+    {
+      "name": "baseline",
+      "fault": "none",
+      "params": {
+        "observe_s": 30
+      },
+      "passed": true,
+      "timeline_s": {},
+      "counts": {
+        "ticks_baseline_10s": 7,
+        "heartbeat_trips": 0,
+        "heartbeat_recoveries": 0
+      },
+      "positions": {
+        "before": 0,
+        "after": 0,
+        "unchanged": true
+      },
+      "notes": "7 updates in 30s through the proxy; 0 ambient heartbeat trip(s), 0 recovered \u2014 natural tick gaps on these instruments at this hour"
+    },
+    {
+      "name": "silent_stall",
+      "fault": "timeout toxic (downstream, indefinite)",
+      "params": {
+        "toxic": {
+          "type": "timeout",
+          "stream": "downstream",
+          "timeout_ms": 0
+        }
+      },
+      "passed": true,
+      "timeline_s": {
+        "detected": 5.52,
+        "fault_cleared": 5.52,
+        "recovered": 5.81,
+        "first_tick_after_clear": 6.23
+      },
+      "counts": {
+        "ticks_baseline_10s": 1,
+        "ticks_during_fault": 0,
+        "ticks_after": 1,
+        "heartbeat_trips": 1,
+        "sdk_reconnects": 0,
+        "errors": 0
+      },
+      "positions": {
+        "before": 0,
+        "after": 0,
+        "unchanged": true
+      },
+      "notes": ""
+    },
+    {
+      "name": "hard_cut",
+      "fault": "proxy disabled 12s (TCP severed)",
+      "params": {
+        "disabled_s": 12
+      },
+      "passed": true,
+      "timeline_s": {
+        "detected": 9.45,
+        "fault_cleared": 9.53,
+        "recovered": 9.63,
+        "first_tick_after_clear": 9.99
+      },
+      "counts": {
+        "ticks_baseline_10s": 1,
+        "ticks_during_fault": 0,
+        "ticks_after": 1,
+        "heartbeat_trips": 1,
+        "sdk_reconnects": 0,
+        "errors": 0
+      },
+      "positions": {
+        "before": 0,
+        "after": 0,
+        "unchanged": true
+      },
+      "notes": "detected via heartbeat path"
+    },
+    {
+      "name": "latency_spike",
+      "fault": "latency toxic 3000ms \u00b1 500ms (downstream, 20s)",
+      "params": {
+        "latency_ms": 3000,
+        "jitter_ms": 500,
+        "hold_s": 20
+      },
+      "passed": true,
+      "timeline_s": {
+        "detected": null,
+        "fault_cleared": 20.07,
+        "recovered": null,
+        "first_tick_after_clear": 20.27
+      },
+      "counts": {
+        "ticks_baseline_10s": 3,
+        "ticks_during_fault": 7,
+        "ticks_after": 2,
+        "heartbeat_trips": 0,
+        "sdk_reconnects": 0,
+        "errors": 0
+      },
+      "positions": {
+        "before": 0,
+        "after": 0,
+        "unchanged": true
+      },
+      "notes": "rode out the latency without tripping"
+    },
+    {
+      "name": "slow_trickle",
+      "fault": "slicer toxic ~64B slices, 2ms gaps (downstream, 20s)",
+      "params": {
+        "average_size": 64,
+        "size_variation": 32,
+        "delay_us": 2000,
+        "hold_s": 20
+      },
+      "passed": true,
+      "timeline_s": {
+        "detected": null,
+        "fault_cleared": 20.07,
+        "recovered": null,
+        "first_tick_after_clear": 26.89
+      },
+      "counts": {
+        "ticks_baseline_10s": 3,
+        "ticks_during_fault": 10,
+        "ticks_after": 5,
+        "heartbeat_trips": 0,
+        "sdk_reconnects": 0,
+        "errors": 0
+      },
+      "positions": {
+        "before": 0,
+        "after": 0,
+        "unchanged": true
+      },
+      "notes": "10 updates arrived through sliced frames"
+    }
+  ]
+}
