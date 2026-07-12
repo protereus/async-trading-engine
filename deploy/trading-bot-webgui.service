@@ -1,0 +1,28 @@
+# Example systemd unit for the read-only dashboard — adjust user and paths.
+[Unit]
+Description=async-trading-engine dashboard (read-only)
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=trader
+WorkingDirectory=/opt/async-trading-engine
+Environment=WEBGUI_HOST=127.0.0.1
+Environment=WEBGUI_PORT=8080
+Environment=WEBGUI_BOT_STATE=/opt/async-trading-engine/bot_state.json
+Environment=WEBGUI_CANDLE_DB=/opt/async-trading-engine/candles.db
+ExecStart=/opt/async-trading-engine/.venv/bin/python -u -m webgui.server
+Restart=on-failure
+RestartSec=10
+MemoryMax=256M
+NoNewPrivileges=true
+PrivateTmp=true
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=trading-bot-webgui
+
+[Install]
+WantedBy=multi-user.target

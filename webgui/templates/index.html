@@ -1,0 +1,559 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Trading Bot Dashboard</title>
+<meta http-equiv="refresh" content="30">
+<style>
+:root {
+  --bg: #0f1419; --fg: #d8dee9; --muted: #707a8a; --card: #1a2128;
+  --border: #2b333b; --accent: #88c0d0; --good: #a3be8c; --bad: #bf616a;
+  --warn: #ebcb8b;
+}
+* { box-sizing: border-box; }
+body {
+  background: var(--bg); color: var(--fg); margin: 0;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-size: 14px;
+}
+header {
+  padding: 16px 24px; background: var(--card); border-bottom: 1px solid var(--border);
+  display: flex; align-items: baseline; gap: 16px; flex-wrap: wrap;
+}
+header h1 { margin: 0; font-size: 18px; font-weight: 600; }
+header .meta { color: var(--muted); font-size: 12px; }
+main { padding: 16px 24px; display: grid; gap: 16px;
+       grid-template-columns: repeat(auto-fit, minmax(380px, 1fr)); }
+.card {
+  background: var(--card); border: 1px solid var(--border); border-radius: 8px;
+  padding: 16px;
+}
+.card h2 { margin: 0 0 12px 0; font-size: 13px; text-transform: uppercase;
+           letter-spacing: 0.5px; color: var(--muted); font-weight: 600; }
+.stat-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.stat .label { color: var(--muted); font-size: 11px; text-transform: uppercase;
+               letter-spacing: 0.5px; }
+.stat .value { font-size: 22px; font-weight: 600; margin-top: 2px; }
+.good { color: var(--good); }
+.bad { color: var(--bad); }
+.warn { color: var(--warn); }
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--border); }
+th { color: var(--muted); font-weight: 600; font-size: 11px; text-transform: uppercase;
+     letter-spacing: 0.5px; }
+td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+.tag {
+  display: inline-block; padding: 1px 6px; border-radius: 3px; font-size: 11px;
+  font-weight: 600;
+}
+.tag.long { background: rgba(163, 190, 140, 0.15); color: var(--good); }
+.tag.short { background: rgba(191, 97, 106, 0.15); color: var(--bad); }
+.tag.muted { background: rgba(112, 122, 138, 0.15); color: var(--muted); }
+.bar { height: 4px; background: var(--border); border-radius: 2px; overflow: hidden;
+       margin-top: 4px; }
+.bar > span { display: block; height: 100%; background: var(--accent); }
+footer { color: var(--muted); font-size: 11px; padding: 16px 24px; text-align: center; }
+.empty { color: var(--muted); font-style: italic; padding: 8px 0; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Trading Bot</h1>
+  <span class="meta">
+    {% if snap.heartbeat_age_s is not none %}
+      heartbeat {{ snap.heartbeat_age_s }}s ago
+      {% if snap.heartbeat_age_s > 120 %} <span class="bad">(stale)</span>{% endif %}
+    {% else %}<span class="bad">no heartbeat recorded</span>{% endif %}
+    {% if snap.trading_halted %} · <span class="bad">HALTED</span>{% endif %}
+    {% if snap.consecutive_losses > 0 %} · <span class="warn">losses: {{ snap.consecutive_losses }}</span>{% endif %}
+  </span>
+  <span class="meta" style="margin-left: auto;">auto-refresh 30s</span>
+</header>
+
+{% if snap.rerank_progress %}
+{% set rp = snap.rerank_progress %}
+{% if rp.phase is defined %}
+  {# New shape — bot writes rerank_status.json with phase milestones. #}
+  {% set overall_pct = ((rp.batches_done or 0) * 100 // rp.batches_total) if rp.batches_total else 0 %}
+  {% set phase_age = (snap.now_ms // 1000) - (rp.phase_started_at|int) if rp.phase_started_at else 0 %}
+  {% set rerank_age = (snap.now_ms // 1000) - (rp.started_at|int) if rp.started_at else 0 %}
+  <div style="background: var(--card); border-bottom: 1px solid var(--border); padding: 10px 24px;">
+    <div style="display: flex; align-items: center; gap: 16px; font-size: 13px;">
+      <span style="color: var(--accent); font-weight: 600;">⏳ Rerank · {{ rp.phase }} <span class="meta">({{ phase_age|duration }})</span></span>
+      <span style="font-variant-numeric: tabular-nums;">{{ rp.batches_done or 0 }}/{{ rp.batches_total or "?" }} batches ({{ overall_pct }}%)</span>
+      {% if rp.current_batch %}
+        {% set cb = rp.current_batch %}
+        {% set cb_pct = (cb.current * 100 // cb.total) if cb.total else 0 %}
+        <span class="meta">{{ cb.label or "current batch" }} {{ cb.current }}/{{ cb.total }} ({{ cb_pct }}%) · ETA {{ cb.eta_s|duration }} · {{ "{:.2f}".format(cb.rate_s_per_it) }}{{ cb.unit or "s/it" }}</span>
+      {% endif %}
+      <span class="meta">elapsed {{ rerank_age|duration }}</span>
+      <span class="meta" style="margin-left: auto;">next rerank {{ rp.next_rerank_at|datetime if rp.next_rerank_at else "—" }}</span>
+    </div>
+    <div class="bar" style="height: 6px; margin-top: 6px;"><span style="width: {{ overall_pct }}%"></span></div>
+    {% if rp.current_batch and rp.current_batch.total %}
+      <div class="bar" style="height: 3px; margin-top: 3px; opacity: 0.55;"><span style="width: {{ (rp.current_batch.current * 100 // rp.current_batch.total) }}%"></span></div>
+    {% endif %}
+  </div>
+{% else %}
+  {# Legacy fallback — journald tqdm parse, current-batch only. #}
+  <div style="background: var(--card); border-bottom: 1px solid var(--border); padding: 10px 24px;">
+    <div style="display: flex; align-items: center; gap: 16px; font-size: 13px;">
+      <span style="color: var(--accent); font-weight: 600;">⏳ Rerank in progress</span>
+      <span style="font-variant-numeric: tabular-nums;">{{ rp.current }}/{{ rp.total }} ({{ rp.percent }}%)</span>
+      <span class="meta">ETA {{ rp.eta_s|duration }} · {{ "{:.2f}".format(rp.rate_s_per_it) }}s/it</span>
+      <span class="meta">elapsed {{ rp.elapsed_s|duration }} this batch</span>
+      <span class="meta" style="margin-left: auto;">tqdm stream (~21 batches/group · 1–2 groups/rerank)</span>
+    </div>
+    <div class="bar" style="height: 6px; margin-top: 6px;"><span style="width: {{ rp.percent }}%"></span></div>
+  </div>
+{% endif %}
+{% endif %}
+
+<main>
+  <!-- Equity / risk summary -->
+  <section class="card">
+    <h2>Account</h2>
+    <div class="stat-grid">
+      <div class="stat">
+        <div class="label">Cash</div>
+        <div class="value">£{{ "{:,.2f}".format(snap.cash) }}</div>
+      </div>
+      <div class="stat">
+        <div class="label">Open P&amp;L</div>
+        <div class="value {% if snap.open_pnl >= 0 %}good{% else %}bad{% endif %}">
+          {{ "+" if snap.open_pnl >= 0 else "" }}£{{ "{:,.2f}".format(snap.open_pnl) }}
+        </div>
+      </div>
+      <div class="stat">
+        <div class="label">Equity</div>
+        <div class="value">£{{ "{:,.2f}".format(snap.equity) }}</div>
+      </div>
+      <div class="stat">
+        <div class="label">P&amp;L (24 h rolling)</div>
+        <div class="value {% if snap.pnl_24h >= 0 %}good{% else %}bad{% endif %}">
+          {{ "+" if snap.pnl_24h >= 0 else "" }}£{{ "{:.2f}".format(snap.pnl_24h) }}
+        </div>
+      </div>
+      <div class="stat">
+        <div class="label">Peak equity</div>
+        <div class="value">£{{ "{:,.2f}".format(snap.peak_equity) }}</div>
+      </div>
+      <div class="stat">
+        <div class="label">Drawdown</div>
+        <div class="value {% if snap.drawdown_pct >= 5 %}bad{% elif snap.drawdown_pct >= 2 %}warn{% endif %}">
+          {{ "{:.2f}".format(snap.drawdown_pct) }}%
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Open positions -->
+  <section class="card">
+    <h2>Open positions ({{ snap.positions|length }})</h2>
+    {% if snap.positions %}
+    <table>
+      <thead><tr>
+        <th>Symbol</th><th class="num">Entry</th><th class="num">Current</th>
+        <th class="num">Stop</th><th class="num">P&amp;L %</th>
+        <th class="num">Age</th><th class="num">Size</th>
+      </tr></thead>
+      <tbody>
+      {% for p in snap.positions %}
+        <tr>
+          <td>{{ p.symbol }}</td>
+          <td class="num">{{ "{:.4f}".format(p.entry_display) }}</td>
+          <td class="num">
+            {% if p.current_display is not none %}{{ "{:.4f}".format(p.current_display) }}
+            {% else %}—{% endif %}
+          </td>
+          <td class="num">
+            {% if p.stop_display is not none %}{{ "{:.4f}".format(p.stop_display) }}
+              <span class="muted">({{ "{:.2f}".format(p.stop_pct * 100) }}%)</span>
+            {% else %}—{% endif %}
+          </td>
+          <td class="num {% if p.unrealised_pnl_pct is none %}{% elif p.unrealised_pnl_pct >= 0 %}good{% else %}bad{% endif %}">
+            {% if p.unrealised_pnl_pct is not none %}
+              {{ "+" if p.unrealised_pnl_pct >= 0 else "" }}{{ "{:.2f}".format(p.unrealised_pnl_pct) }}%
+            {% else %}—{% endif %}
+          </td>
+          <td class="num">
+            {% if p.opened_ago_s is not none %}
+              {% if p.opened_ago_s < 3600 %}{{ p.opened_ago_s // 60 }}m
+              {% elif p.opened_ago_s < 86400 %}{{ "{:.1f}".format(p.opened_ago_s / 3600) }}h
+              {% else %}{{ "{:.1f}".format(p.opened_ago_s / 86400) }}d{% endif %}
+            {% else %}—{% endif %}
+          </td>
+          <td class="num">{{ "{:.2f}".format(p.quantity) }} £/pt</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    {% else %}<div class="empty">No open positions.</div>{% endif %}
+  </section>
+
+  <!-- Markets & trading hours reference -->
+  <section class="card" style="grid-column: 1 / -1;">
+    <h2>Markets &amp; trading hours</h2>
+    {% if snap.markets %}
+    <table>
+      <thead><tr>
+        <th>Market</th><th class="num">Assets</th><th>Hours (UTC)</th>
+        <th>Status</th><th>Symbols</th>
+      </tr></thead>
+      <tbody>
+      {% for m in snap.markets %}
+        <tr>
+          <td>{{ m.label }}</td>
+          <td class="num">{{ m.count }}</td>
+          <td>{{ m.schedule }}</td>
+          <td>
+            {% if m.is_open %}
+              <span class="tag long">OPEN</span>
+            {% else %}
+              <span class="tag" style="background: rgba(235, 203, 139, 0.18); color: var(--warn);">
+                CLOSED{% if m.opens_in_s is not none %} (opens in {{ m.opens_in_s|duration }}){% endif %}
+              </span>
+            {% endif %}
+          </td>
+          <td class="muted" style="font-size: 12px;">{{ m.symbols|join(", ") }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    {% else %}<div class="empty">No market reference available.</div>{% endif %}
+  </section>
+
+  <!-- Latest rerank signals -->
+  <section class="card" style="grid-column: 1 / -1;">
+    <h2>Latest signals (rerank @ {% if snap.signals %}{{ (snap.signals[0].scored_at / 1000)|int|datetime }}{% else %}—{% endif %})</h2>
+    {% if snap.signals %}
+    <table>
+      <thead><tr>
+        <th>Symbol</th><th class="num">Mean return</th><th class="num">Confidence</th>
+        <th class="num">Uncertainty</th><th class="num">MFE</th><th class="num">MAE</th>
+        <th class="num">Monot.</th><th>Direction</th>
+      </tr></thead>
+      <tbody>
+      {% for s in snap.signals %}
+        <tr>
+          <td>{{ s.symbol }}</td>
+          <td class="num {% if s.mean_return >= 0 %}good{% else %}bad{% endif %}">
+            {{ "{:+.2f}".format(s.mean_return * 100) }}%
+          </td>
+          <td class="num">{{ "{:.0%}".format(s.direction_confidence) }}</td>
+          <td class="num">{{ "{:.2f}".format(s.uncertainty) }}</td>
+          <td class="num">{{ "{:+.2f}".format((s.predicted_mfe_pct or 0) * 100) }}%</td>
+          <td class="num">{{ "{:+.2f}".format((s.predicted_mae_pct or 0) * 100) }}%</td>
+          <td class="num">{{ "{:+.2f}".format(s.monotonicity or 0) }}</td>
+          <td>
+            {% if s.mean_return >= 0.001 and s.direction_confidence >= 0.70 and s.uncertainty <= 2.0 %}
+              {% if s.market_open %}
+                <span class="tag long">tradeable LONG</span>
+              {% else %}
+                <span class="tag" style="background: rgba(235, 203, 139, 0.18); color: var(--warn);" title="Kronos thresholds met but the IG market is currently closed (weekend / maintenance window) — no entry until it reopens">ready · market closed</span>
+              {% endif %}
+            {% elif s.mean_return < 0 %}
+              <span class="tag short">SHORT</span>
+            {% else %}
+              <span class="tag muted">below threshold</span>
+            {% endif %}
+          </td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    {% else %}<div class="empty">No signals scored yet.</div>{% endif %}
+  </section>
+
+  <!-- Signal accuracy -->
+  <section class="card">
+    <h2>Calibration (last {{ snap.accuracy.sample_size }} resolved signals)</h2>
+    {% if snap.accuracy.sample_size > 0 %}
+    <div class="stat">
+      <div class="label">Direction hit rate</div>
+      <div class="value {% if snap.accuracy.hit_rate > 0.55 %}good{% elif snap.accuracy.hit_rate < 0.50 %}bad{% endif %}">
+        {{ "{:.1%}".format(snap.accuracy.hit_rate) }}
+      </div>
+      <div class="bar"><span style="width: {{ (snap.accuracy.hit_rate * 100)|round(1) }}%"></span></div>
+    </div>
+    <table style="margin-top: 12px;">
+      <thead><tr><th>Quintile</th><th class="num">N</th><th class="num">Mean pred.</th><th class="num">Mean actual</th></tr></thead>
+      <tbody>
+      {% for q in snap.accuracy.quintiles %}
+        <tr>
+          <td>Q{{ q.q }}</td>
+          <td class="num">{{ q.n }}</td>
+          <td class="num">{{ "{:+.2f}".format(q.pred * 100) }}%</td>
+          <td class="num {% if q.actual >= 0 %}good{% else %}bad{% endif %}">
+            {{ "{:+.2f}".format(q.actual * 100) }}%
+          </td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    {% if snap.calibration %}
+    {% set cal = snap.calibration %}
+    <div class="label" style="margin-top: 14px;">Predicted vs realised ({{ cal.sample_size }} pts)</div>
+    <svg viewBox="0 0 {{ cal.size }} {{ cal.size }}" width="100%" style="max-width: 240px; margin-top: 4px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px;">
+      <!-- zero axes -->
+      <line x1="{{ "{:.1f}".format(cal.pad) }}" y1="{{ "{:.1f}".format(cal.zero_y) }}" x2="{{ "{:.1f}".format(cal.size - cal.pad) }}" y2="{{ "{:.1f}".format(cal.zero_y) }}" stroke="var(--border)" stroke-width="1"/>
+      <line x1="{{ "{:.1f}".format(cal.zero_x) }}" y1="{{ "{:.1f}".format(cal.pad) }}" x2="{{ "{:.1f}".format(cal.zero_x) }}" y2="{{ "{:.1f}".format(cal.size - cal.pad) }}" stroke="var(--border)" stroke-width="1"/>
+      <!-- perfect-calibration diagonal -->
+      <line x1="{{ "{:.1f}".format(cal.diag.x1) }}" y1="{{ "{:.1f}".format(cal.diag.y1) }}" x2="{{ "{:.1f}".format(cal.diag.x2) }}" y2="{{ "{:.1f}".format(cal.diag.y2) }}" stroke="var(--muted)" stroke-width="0.75" stroke-dasharray="4 3"/>
+      <!-- resolved points (green = direction hit, red = miss) -->
+      {% for pt in cal.points %}
+      <circle cx="{{ "{:.1f}".format(pt.x) }}" cy="{{ "{:.1f}".format(pt.y) }}" r="2" fill="{{ 'var(--good)' if pt.correct else 'var(--bad)' }}" opacity="0.55"/>
+      {% endfor %}
+      <!-- quintile-mean reliability line -->
+      <polyline points="{{ cal.quintile_points }}" fill="none" stroke="var(--accent)" stroke-width="1.5"/>
+    </svg>
+    <div class="meta" style="font-size: 11px; margin-top: 4px;">
+      x predicted % · y realised % · dashed = perfect calibration · line = quintile means · axis ±{{ "{:.1f}".format(cal.axis_max) }}%
+    </div>
+    {% endif %}
+    {% else %}<div class="empty">No resolved signals yet (need ~5 days of history).</div>{% endif %}
+  </section>
+
+  <!-- Prediction vs realised — latest resolved signal path -->
+  <section class="card" style="grid-column: 1 / -1;">
+    <h2>Prediction vs realised — latest resolved signal</h2>
+    {% if snap.prediction_path %}
+    {% set pp = snap.prediction_path %}
+    <div style="display: flex; gap: 20px; align-items: center; flex-wrap: wrap;">
+      <svg viewBox="0 0 {{ pp.width }} {{ pp.height }}" width="100%" style="max-width: 640px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px;">
+        <!-- realised high/low envelope -->
+        <rect x="0" y="{{ "{:.1f}".format(pp.band.y_hi) }}" width="{{ pp.width }}" height="{{ "{:.1f}".format(pp.band.y_lo - pp.band.y_hi) }}" fill="rgba(235, 203, 139, 0.08)"/>
+        <line x1="0" y1="{{ "{:.1f}".format(pp.band.y_hi) }}" x2="{{ pp.width }}" y2="{{ "{:.1f}".format(pp.band.y_hi) }}" stroke="var(--warn)" stroke-width="0.5" stroke-dasharray="3 3" opacity="0.6"/>
+        <line x1="0" y1="{{ "{:.1f}".format(pp.band.y_lo) }}" x2="{{ pp.width }}" y2="{{ "{:.1f}".format(pp.band.y_lo) }}" stroke="var(--warn)" stroke-width="0.5" stroke-dasharray="3 3" opacity="0.6"/>
+        <!-- entry (zero) line -->
+        <line x1="0" y1="{{ "{:.1f}".format(pp.zero_y) }}" x2="{{ pp.width }}" y2="{{ "{:.1f}".format(pp.zero_y) }}" stroke="var(--border)" stroke-width="1"/>
+        <!-- predicted close path -->
+        <polyline points="{{ pp.pred_points }}" fill="none" stroke="var(--accent)" stroke-width="1.5"/>
+        <circle cx="{{ "{:.1f}".format(pp.pred_end.x) }}" cy="{{ "{:.1f}".format(pp.pred_end.y) }}" r="3" fill="var(--accent)"/>
+        <!-- realised outcome at horizon -->
+        <circle cx="{{ "{:.1f}".format(pp.realized_point.x) }}" cy="{{ "{:.1f}".format(pp.realized_point.y) }}" r="3.5" fill="{{ 'var(--good)' if pp.realized_return >= 0 else 'var(--bad)' }}"/>
+      </svg>
+      <div style="font-size: 13px; min-width: 190px;">
+        <div><strong>{{ pp.symbol }}</strong> · H = {{ pp.horizon_bars }}h</div>
+        <div class="meta">scored {{ (pp.scored_at_ms / 1000)|int|datetime }}</div>
+        <div style="margin-top: 10px; line-height: 1.7;">
+          <span style="color: var(--accent);">●</span> predicted {{ "{:+.2f}".format(pp.pred_return) }}%<br>
+          <span class="{% if pp.realized_return >= 0 %}good{% else %}bad{% endif %}">●</span> realised {{ "{:+.2f}".format(pp.realized_return) }}%<br>
+          <span class="warn">▭</span> actual range {{ "{:+.2f}".format(pp.band.lo) }}% … {{ "{:+.2f}".format(pp.band.hi) }}%<br>
+          <span class="meta">error {{ "{:+.2f}".format(pp.error) }} pts</span>
+        </div>
+      </div>
+    </div>
+    {% else %}<div class="empty">No resolved prediction with a stored path yet (need ~5 days of history).</div>{% endif %}
+  </section>
+
+  <!-- Recently resolved signals — per-signal error -->
+  <section class="card" style="grid-column: 1 / -1;">
+    <h2>Recently resolved signals</h2>
+    {% if snap.resolved %}
+    <table>
+      <thead><tr>
+        <th>Scored</th><th>Symbol</th><th class="num">Predicted</th>
+        <th class="num">Realised</th><th class="num">Error</th><th>Direction</th>
+      </tr></thead>
+      <tbody>
+      {% for r in snap.resolved %}
+        <tr>
+          <td style="white-space: nowrap;">
+            {{ (r.scored_at / 1000)|int|datetime }}
+            {% if r.gap_spanned %}<span class="tag muted" title="Horizon window truncated by a market-closure gap — realised return is downward-biased">gap</span>{% endif %}
+          </td>
+          <td>{{ r.symbol }}</td>
+          <td class="num">{{ "{:+.2f}".format(r.pred_return * 100) }}%</td>
+          <td class="num {% if r.realized_return >= 0 %}good{% else %}bad{% endif %}">
+            {{ "{:+.2f}".format(r.realized_return * 100) }}%
+          </td>
+          <td class="num">{{ "{:+.2f}".format(r.error * 100) }}%</td>
+          <td>
+            {% if r.correct %}<span class="tag long">✓ hit</span>
+            {% else %}<span class="tag short">✗ miss</span>{% endif %}
+          </td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    {% else %}<div class="empty">No resolved signals yet (need ~5 days of history).</div>{% endif %}
+  </section>
+
+  <!-- Correlation top pairs -->
+  <section class="card">
+    <h2>Top correlated pairs</h2>
+    {% if snap.correlations %}
+    <table>
+      <thead><tr><th>Pair</th><th class="num">|corr|</th></tr></thead>
+      <tbody>
+      {% for c in snap.correlations %}
+        <tr>
+          <td>{{ c.symbol_a }} ↔ {{ c.symbol_b }}</td>
+          <td class="num">{{ "{:+.2f}".format(c.correlation) }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    {% else %}<div class="empty">No correlation snapshot yet.</div>{% endif %}
+  </section>
+
+  <!-- Service diagnostics -->
+  <section class="card">
+    <h2>Service</h2>
+    <div class="stat-grid">
+      <div class="stat">
+        <div class="label">trading-bot</div>
+        <div class="value {% if snap.service.active == 'active' and snap.service.sub_state == 'running' %}good{% else %}bad{% endif %}">
+          {{ snap.service.active }}/{{ snap.service.sub_state }}
+        </div>
+      </div>
+      <div class="stat">
+        <div class="label">Uptime</div>
+        <div class="value">
+          {% if snap.service.uptime_s is not none %}{{ snap.service.uptime_s|duration }}{% else %}n/a{% endif %}
+        </div>
+      </div>
+      <div class="stat">
+        <div class="label">PID · restarts</div>
+        <div class="value">{{ snap.service.pid }} · {{ snap.service.restarts if snap.service.restarts is not none else "—" }}</div>
+      </div>
+      <div class="stat">
+        <div class="label">Bot RSS</div>
+        <div class="value">
+          {% if snap.service.bot_mem_mb is not none %}{{ "{:.0f}".format(snap.service.bot_mem_mb) }} MiB{% else %}n/a{% endif %}
+        </div>
+      </div>
+      <div class="stat">
+        <div class="label">Last rerank</div>
+        <div class="value {% if snap.service.last_rerank_age_s is not none and snap.service.last_rerank_age_s > 7200 %}warn{% endif %}">
+          {% if snap.service.last_rerank_age_s is not none %}{{ snap.service.last_rerank_age_s|duration }} ago{% else %}—{% endif %}
+        </div>
+      </div>
+      <div class="stat">
+        <div class="label">Heartbeat</div>
+        <div class="value {% if snap.heartbeat_age_s is not none and snap.heartbeat_age_s > 120 %}bad{% endif %}">
+          {% if snap.heartbeat_age_s is not none %}{{ snap.heartbeat_age_s }}s ago{% else %}—{% endif %}
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Host (VPS) -->
+  <section class="card">
+    <h2>VPS</h2>
+    <div class="stat-grid">
+      <div class="stat">
+        <div class="label">Host uptime</div>
+        <div class="value">
+          {% if snap.host.uptime_s is not none %}{{ snap.host.uptime_s|duration }}{% else %}n/a{% endif %}
+        </div>
+      </div>
+      <div class="stat">
+        <div class="label">CPUs</div>
+        <div class="value">{{ snap.host.loadavg.cpu_count }}</div>
+      </div>
+      <div class="stat">
+        <div class="label">Load 1m / 5m / 15m</div>
+        <div class="value">
+          {% if snap.host.loadavg.load1 is not none %}
+            {{ "{:.2f}".format(snap.host.loadavg.load1) }} /
+            {{ "{:.2f}".format(snap.host.loadavg.load5) }} /
+            {{ "{:.2f}".format(snap.host.loadavg.load15) }}
+          {% else %}n/a{% endif %}
+        </div>
+      </div>
+      <div class="stat">
+        <div class="label">CPU usage (5m)</div>
+        <div class="value {% if snap.host.loadavg.load5_per_cpu_pct and snap.host.loadavg.load5_per_cpu_pct >= 80 %}bad{% elif snap.host.loadavg.load5_per_cpu_pct and snap.host.loadavg.load5_per_cpu_pct >= 50 %}warn{% endif %}">
+          {% if snap.host.loadavg.load5_per_cpu_pct is not none %}{{ "{:.0f}".format(snap.host.loadavg.load5_per_cpu_pct) }}%{% else %}n/a{% endif %}
+        </div>
+        {% if snap.host.loadavg.load5_per_cpu_pct is not none %}
+        <div class="bar"><span style="width: {{ [snap.host.loadavg.load5_per_cpu_pct, 100]|min }}%"></span></div>
+        {% endif %}
+      </div>
+      <div class="stat" style="grid-column: 1 / -1;">
+        <div class="label">RAM used</div>
+        <div class="value {% if snap.host.memory.used_pct >= 85 %}bad{% elif snap.host.memory.used_pct >= 70 %}warn{% endif %}">
+          {{ "{:.1f}".format(snap.host.memory.used_gib) }} / {{ "{:.1f}".format(snap.host.memory.total_gib) }} GiB
+          ({{ "{:.1f}".format(snap.host.memory.used_pct) }}%)
+        </div>
+        <div class="bar"><span style="width: {{ snap.host.memory.used_pct }}%"></span></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Recent events -->
+  <section class="card" style="grid-column: 1 / -1;">
+    <h2>Recent activity</h2>
+    {% if snap.events.error %}
+      <div class="empty">journalctl: {{ snap.events.error }}</div>
+    {% elif snap.events.events %}
+    <table>
+      <thead><tr><th>When</th><th>Message</th></tr></thead>
+      <tbody>
+      {% for ev in snap.events.events %}
+        <tr>
+          <td style="white-space: nowrap;">{{ (ev.ts_ms / 1000)|int|datetime }}</td>
+          <td style="font-family: ui-monospace, SF Mono, Consolas, monospace; font-size: 12px;">{{ ev.message }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    {% else %}<div class="empty">No matching events in the last 24h.</div>{% endif %}
+  </section>
+
+  <!-- Recent errors / warnings -->
+  <section class="card" style="grid-column: 1 / -1;">
+    <h2>Recent warnings &amp; errors</h2>
+    {% if snap.log_errors.error %}
+      <div class="empty">journalctl: {{ snap.log_errors.error }}</div>
+    {% elif snap.log_errors.errors %}
+    <table>
+      <thead><tr><th>When</th><th>Prio</th><th>Message</th></tr></thead>
+      <tbody>
+      {% for e in snap.log_errors.errors %}
+        <tr>
+          <td style="white-space: nowrap;">{{ (e.ts_ms / 1000)|int|datetime }}</td>
+          <td>
+            {% if e.priority <= 3 %}<span class="tag short">ERR</span>
+            {% elif e.priority == 4 %}<span class="tag" style="background: rgba(235, 203, 139, 0.18); color: var(--warn);">WARN</span>
+            {% else %}<span class="tag muted">{{ e.priority }}</span>{% endif %}
+          </td>
+          <td style="font-family: ui-monospace, SF Mono, Consolas, monospace; font-size: 12px;">{{ e.message }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    {% else %}<div class="empty">No warnings or errors in the last 24h.</div>{% endif %}
+  </section>
+
+  <!-- Sentiment -->
+  <section class="card">
+    <h2>Sentiment (latest score per asset)</h2>
+    {% if snap.sentiment %}
+    <table>
+      <thead><tr><th>Asset</th><th class="num">Sentiment</th><th class="num">Conf.</th><th class="num">Agreement</th></tr></thead>
+      <tbody>
+      {% for s in snap.sentiment %}
+        <tr>
+          <td>{{ s.asset }}{% if s.escalated %} <span class="tag muted">esc</span>{% endif %}</td>
+          <td class="num {% if s.sentiment > 0.1 %}good{% elif s.sentiment < -0.1 %}bad{% endif %}">
+            {{ "{:+.2f}".format(s.sentiment) }}
+          </td>
+          <td class="num">{{ "{:.0%}".format(s.confidence) }}</td>
+          <td class="num">{{ "{:.0%}".format(s.agreement) }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    {% else %}<div class="empty">Sentiment overlay disabled or no scores yet.</div>{% endif %}
+  </section>
+</main>
+
+<footer>
+  state: {{ state_path }} · db: {{ db_path }} ·
+  <a href="/api/snapshot" style="color: var(--muted);">/api/snapshot</a>
+</footer>
+</body>
+</html>
