@@ -2,6 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Trading Bot Dashboard</title>
 <meta http-equiv="refresh" content="30">
 <style>
@@ -51,6 +52,7 @@ main.tab-panel.active { display: grid; }
 .good { color: var(--good); }
 .bad { color: var(--bad); }
 .warn { color: var(--warn); }
+.table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
 table { width: 100%; border-collapse: collapse; font-size: 13px; }
 th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--border); }
 th { color: var(--muted); font-weight: 600; font-size: 11px; text-transform: uppercase;
@@ -173,6 +175,7 @@ footer { color: var(--muted); font-size: 11px; padding: 16px 24px; text-align: c
   <section class="card">
     <h2>Open positions ({{ snap.positions|length }})</h2>
     {% if snap.positions %}
+    <div class="table-wrap">
     <table>
       <thead><tr>
         <th>Symbol</th><th class="num">Entry</th><th class="num">Current</th>
@@ -210,6 +213,7 @@ footer { color: var(--muted); font-size: 11px; padding: 16px 24px; text-align: c
       {% endfor %}
       </tbody>
     </table>
+    </div>
     {% else %}<div class="empty">No open positions.</div>{% endif %}
   </section>
 
@@ -240,6 +244,7 @@ footer { color: var(--muted); font-size: 11px; padding: 16px 24px; text-align: c
   <section class="card" style="grid-column: 1 / -1;">
     <h2>Markets &amp; trading hours</h2>
     {% if snap.markets %}
+    <div class="table-wrap">
     <table>
       <thead><tr>
         <th>Market</th><th class="num">Assets</th><th>Hours (UTC)</th>
@@ -265,6 +270,7 @@ footer { color: var(--muted); font-size: 11px; padding: 16px 24px; text-align: c
       {% endfor %}
       </tbody>
     </table>
+    </div>
     {% else %}<div class="empty">No market reference available.</div>{% endif %}
   </section>
 
@@ -272,6 +278,7 @@ footer { color: var(--muted); font-size: 11px; padding: 16px 24px; text-align: c
   <section class="card" style="grid-column: 1 / -1;">
     <h2>Latest signals (rerank @ {% if snap.signals %}{{ (snap.signals[0].scored_at / 1000)|int|datetime }}{% else %}—{% endif %})</h2>
     {% if snap.signals %}
+    <div class="table-wrap">
     <table>
       <thead><tr>
         <th>Symbol</th><th class="num">Mean return</th><th class="num">Confidence</th>
@@ -307,6 +314,7 @@ footer { color: var(--muted); font-size: 11px; padding: 16px 24px; text-align: c
       {% endfor %}
       </tbody>
     </table>
+    </div>
     {% else %}<div class="empty">No signals scored yet.</div>{% endif %}
   </section>
 
@@ -321,6 +329,7 @@ footer { color: var(--muted); font-size: 11px; padding: 16px 24px; text-align: c
       </div>
       <div class="bar"><span style="width: {{ (snap.accuracy.hit_rate * 100)|round(1) }}%"></span></div>
     </div>
+    <div class="table-wrap">
     <table style="margin-top: 12px;">
       <thead><tr><th>Quintile</th><th class="num">N</th><th class="num">Mean pred.</th><th class="num">Mean actual</th></tr></thead>
       <tbody>
@@ -336,6 +345,7 @@ footer { color: var(--muted); font-size: 11px; padding: 16px 24px; text-align: c
       {% endfor %}
       </tbody>
     </table>
+    </div>
     {% if snap.calibration %}
     {% set cal = snap.calibration %}
     <div class="label" style="margin-top: 14px;">Predicted vs realised ({{ cal.sample_size }} pts)</div>
@@ -363,6 +373,7 @@ footer { color: var(--muted); font-size: 11px; padding: 16px 24px; text-align: c
   <section class="card" style="grid-column: 1 / -1;">
     <h2>Recently resolved signals</h2>
     {% if snap.resolved %}
+    <div class="table-wrap">
     <table>
       <thead><tr>
         <th>Scored</th><th>Symbol</th><th class="num">Predicted</th>
@@ -389,6 +400,7 @@ footer { color: var(--muted); font-size: 11px; padding: 16px 24px; text-align: c
       {% endfor %}
       </tbody>
     </table>
+    </div>
     {% else %}<div class="empty">No resolved signals yet (need ~5 days of history).</div>{% endif %}
   </section>
 
@@ -396,6 +408,7 @@ footer { color: var(--muted); font-size: 11px; padding: 16px 24px; text-align: c
   <section class="card">
     <h2>Top correlated pairs</h2>
     {% if snap.correlations %}
+    <div class="table-wrap">
     <table>
       <thead><tr><th>Pair</th><th class="num">|corr|</th></tr></thead>
       <tbody>
@@ -407,6 +420,7 @@ footer { color: var(--muted); font-size: 11px; padding: 16px 24px; text-align: c
       {% endfor %}
       </tbody>
     </table>
+    </div>
     {% else %}<div class="empty">No correlation snapshot yet.</div>{% endif %}
   </section>
 
@@ -416,6 +430,7 @@ footer { color: var(--muted); font-size: 11px; padding: 16px 24px; text-align: c
     {% if snap.events.error %}
       <div class="empty">journalctl: {{ snap.events.error }}</div>
     {% elif snap.events.events %}
+    <div class="table-wrap">
     <table>
       <thead><tr><th>When</th><th>Message</th></tr></thead>
       <tbody>
@@ -427,6 +442,7 @@ footer { color: var(--muted); font-size: 11px; padding: 16px 24px; text-align: c
       {% endfor %}
       </tbody>
     </table>
+    </div>
     {% else %}<div class="empty">No matching events in the last 24h.</div>{% endif %}
   </section>
 
@@ -434,6 +450,7 @@ footer { color: var(--muted); font-size: 11px; padding: 16px 24px; text-align: c
   <!-- Sentiment -->
   <section class="card">
     <h2>Sentiment (latest score per asset)</h2>
+    <div class="table-wrap">
     <table>
       <thead><tr><th>Asset</th><th class="num">Sentiment</th><th class="num">Conf.</th><th class="num">Agreement</th></tr></thead>
       <tbody>
@@ -449,6 +466,7 @@ footer { color: var(--muted); font-size: 11px; padding: 16px 24px; text-align: c
       {% endfor %}
       </tbody>
     </table>
+    </div>
   </section>
   {% endif %}
 </main>
@@ -537,6 +555,7 @@ footer { color: var(--muted); font-size: 11px; padding: 16px 24px; text-align: c
   <section class="card">
     <h2>Feed freshness</h2>
     {% if snap.feed_freshness %}
+    <div class="table-wrap">
     <table>
       <thead><tr><th>Source</th><th class="num">Symbols</th><th class="num">Freshest candle</th></tr></thead>
       <tbody>
@@ -551,6 +570,7 @@ footer { color: var(--muted); font-size: 11px; padding: 16px 24px; text-align: c
       {% endfor %}
       </tbody>
     </table>
+    </div>
     {% else %}<div class="empty">No candle data yet.</div>{% endif %}
   </section>
 
@@ -560,6 +580,7 @@ footer { color: var(--muted); font-size: 11px; padding: 16px 24px; text-align: c
     {% if snap.log_errors.error %}
       <div class="empty">journalctl: {{ snap.log_errors.error }}</div>
     {% elif snap.log_errors.errors %}
+    <div class="table-wrap">
     <table>
       <thead><tr><th>When</th><th>Prio</th><th>Message</th></tr></thead>
       <tbody>
@@ -576,6 +597,7 @@ footer { color: var(--muted); font-size: 11px; padding: 16px 24px; text-align: c
       {% endfor %}
       </tbody>
     </table>
+    </div>
     {% else %}<div class="empty">No warnings or errors in the last 24h.</div>{% endif %}
   </section>
 </main>
