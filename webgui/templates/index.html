@@ -22,8 +22,22 @@ header {
 }
 header h1 { margin: 0; font-size: 18px; font-weight: 600; }
 header .meta { color: var(--muted); font-size: 12px; }
-main { padding: 16px 24px; display: grid; gap: 16px;
-       grid-template-columns: repeat(auto-fit, minmax(380px, 1fr)); }
+nav.tabs {
+  display: flex; gap: 4px; padding: 10px 24px 0; background: var(--bg);
+}
+nav.tabs button {
+  background: transparent; border: 1px solid var(--border); border-bottom: none;
+  color: var(--muted); padding: 8px 18px; border-radius: 6px 6px 0 0;
+  font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px;
+  cursor: pointer; font-family: inherit;
+}
+nav.tabs button.active { color: var(--accent); background: var(--card); }
+main.tab-panel {
+  padding: 16px 24px; display: none; gap: 16px;
+  grid-template-columns: repeat(auto-fit, minmax(380px, 1fr));
+  border-top: 1px solid var(--border);
+}
+main.tab-panel.active { display: grid; }
 .card {
   background: var(--card); border: 1px solid var(--border); border-radius: 8px;
   padding: 16px;
@@ -66,9 +80,17 @@ footer { color: var(--muted); font-size: 11px; padding: 16px 24px; text-align: c
     {% else %}<span class="bad">no heartbeat recorded</span>{% endif %}
     {% if snap.trading_halted %} · <span class="bad">HALTED</span>{% endif %}
     {% if snap.consecutive_losses > 0 %} · <span class="warn">losses: {{ snap.consecutive_losses }}</span>{% endif %}
+    {% if snap.service.next_rerank_at_ms %}
+      · next rerank in {{ [(snap.service.next_rerank_at_ms - snap.now_ms) // 1000, 0]|max|duration }}
+    {% endif %}
   </span>
   <span class="meta" style="margin-left: auto;">auto-refresh 30s</span>
 </header>
+
+<nav class="tabs">
+  <button type="button" class="tab-btn" data-tab="trading">Trading</button>
+  <button type="button" class="tab-btn" data-tab="server">Server &amp; diagnostics</button>
+</nav>
 
 {% if snap.rerank_progress %}
 {% set rp = snap.rerank_progress %}
@@ -109,7 +131,7 @@ footer { color: var(--muted); font-size: 11px; padding: 16px 24px; text-align: c
 {% endif %}
 {% endif %}
 
-<main>
+<main class="tab-panel" data-tab-panel="trading">
   <!-- Equity / risk summary -->
   <section class="card">
     <h2>Account</h2>
@@ -189,6 +211,29 @@ footer { color: var(--muted); font-size: 11px; padding: 16px 24px; text-align: c
       </tbody>
     </table>
     {% else %}<div class="empty">No open positions.</div>{% endif %}
+  </section>
+
+  <!-- Risk utilization vs entry-gating caps -->
+  {% set ru = snap.risk_utilization %}
+  <section class="card">
+    <h2>Risk utilization</h2>
+    <div class="stat-grid">
+      <div class="stat">
+        <div class="label">Open positions</div>
+        <div class="value {% if ru.open_pct_of_cap >= 100 %}bad{% elif ru.open_pct_of_cap >= 75 %}warn{% endif %}">
+          {{ ru.open_positions }} / {{ ru.max_open_positions }}
+        </div>
+        <div class="bar"><span style="width: {{ ru.open_pct_of_cap }}%"></span></div>
+      </div>
+      <div class="stat">
+        <div class="label">Total risk-on</div>
+        <div class="value {% if ru.risk_pct_of_cap >= 100 %}bad{% elif ru.risk_pct_of_cap >= 75 %}warn{% endif %}">
+          {{ "{:.2f}".format(ru.total_risk_pct * 100) }}% / {{ "{:.0f}".format(ru.max_total_risk_pct * 100) }}%
+        </div>
+        <div class="bar"><span style="width: {{ ru.risk_pct_of_cap }}%"></span></div>
+        <div class="meta" style="margin-top: 4px;">£{{ "{:,.2f}".format(ru.total_risk_gbp) }} at risk</div>
+      </div>
+    </div>
   </section>
 
   <!-- Markets & trading hours reference -->
@@ -314,39 +359,6 @@ footer { color: var(--muted); font-size: 11px; padding: 16px 24px; text-align: c
     {% else %}<div class="empty">No resolved signals yet (need ~5 days of history).</div>{% endif %}
   </section>
 
-  <!-- Prediction vs realised — latest resolved signal path -->
-  <section class="card" style="grid-column: 1 / -1;">
-    <h2>Prediction vs realised — latest resolved signal</h2>
-    {% if snap.prediction_path %}
-    {% set pp = snap.prediction_path %}
-    <div style="display: flex; gap: 20px; align-items: center; flex-wrap: wrap;">
-      <svg viewBox="0 0 {{ pp.width }} {{ pp.height }}" width="100%" style="max-width: 640px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px;">
-        <!-- realised high/low envelope -->
-        <rect x="0" y="{{ "{:.1f}".format(pp.band.y_hi) }}" width="{{ pp.width }}" height="{{ "{:.1f}".format(pp.band.y_lo - pp.band.y_hi) }}" fill="rgba(235, 203, 139, 0.08)"/>
-        <line x1="0" y1="{{ "{:.1f}".format(pp.band.y_hi) }}" x2="{{ pp.width }}" y2="{{ "{:.1f}".format(pp.band.y_hi) }}" stroke="var(--warn)" stroke-width="0.5" stroke-dasharray="3 3" opacity="0.6"/>
-        <line x1="0" y1="{{ "{:.1f}".format(pp.band.y_lo) }}" x2="{{ pp.width }}" y2="{{ "{:.1f}".format(pp.band.y_lo) }}" stroke="var(--warn)" stroke-width="0.5" stroke-dasharray="3 3" opacity="0.6"/>
-        <!-- entry (zero) line -->
-        <line x1="0" y1="{{ "{:.1f}".format(pp.zero_y) }}" x2="{{ pp.width }}" y2="{{ "{:.1f}".format(pp.zero_y) }}" stroke="var(--border)" stroke-width="1"/>
-        <!-- predicted close path -->
-        <polyline points="{{ pp.pred_points }}" fill="none" stroke="var(--accent)" stroke-width="1.5"/>
-        <circle cx="{{ "{:.1f}".format(pp.pred_end.x) }}" cy="{{ "{:.1f}".format(pp.pred_end.y) }}" r="3" fill="var(--accent)"/>
-        <!-- realised outcome at horizon -->
-        <circle cx="{{ "{:.1f}".format(pp.realized_point.x) }}" cy="{{ "{:.1f}".format(pp.realized_point.y) }}" r="3.5" fill="{{ 'var(--good)' if pp.realized_return >= 0 else 'var(--bad)' }}"/>
-      </svg>
-      <div style="font-size: 13px; min-width: 190px;">
-        <div><strong>{{ pp.symbol }}</strong> · H = {{ pp.horizon_bars }}h</div>
-        <div class="meta">scored {{ (pp.scored_at_ms / 1000)|int|datetime }}</div>
-        <div style="margin-top: 10px; line-height: 1.7;">
-          <span style="color: var(--accent);">●</span> predicted {{ "{:+.2f}".format(pp.pred_return) }}%<br>
-          <span class="{% if pp.realized_return >= 0 %}good{% else %}bad{% endif %}">●</span> realised {{ "{:+.2f}".format(pp.realized_return) }}%<br>
-          <span class="warn">▭</span> actual range {{ "{:+.2f}".format(pp.band.lo) }}% … {{ "{:+.2f}".format(pp.band.hi) }}%<br>
-          <span class="meta">error {{ "{:+.2f}".format(pp.error) }} pts</span>
-        </div>
-      </div>
-    </div>
-    {% else %}<div class="empty">No resolved prediction with a stored path yet (need ~5 days of history).</div>{% endif %}
-  </section>
-
   <!-- Recently resolved signals — per-signal error -->
   <section class="card" style="grid-column: 1 / -1;">
     <h2>Recently resolved signals</h2>
@@ -398,6 +410,50 @@ footer { color: var(--muted); font-size: 11px; padding: 16px 24px; text-align: c
     {% else %}<div class="empty">No correlation snapshot yet.</div>{% endif %}
   </section>
 
+  <!-- Recent events -->
+  <section class="card" style="grid-column: 1 / -1;">
+    <h2>Recent activity</h2>
+    {% if snap.events.error %}
+      <div class="empty">journalctl: {{ snap.events.error }}</div>
+    {% elif snap.events.events %}
+    <table>
+      <thead><tr><th>When</th><th>Message</th></tr></thead>
+      <tbody>
+      {% for ev in snap.events.events %}
+        <tr>
+          <td style="white-space: nowrap;">{{ (ev.ts_ms / 1000)|int|datetime }}</td>
+          <td style="font-family: ui-monospace, SF Mono, Consolas, monospace; font-size: 12px;">{{ ev.message }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    {% else %}<div class="empty">No matching events in the last 24h.</div>{% endif %}
+  </section>
+
+  {% if snap.sentiment %}
+  <!-- Sentiment -->
+  <section class="card">
+    <h2>Sentiment (latest score per asset)</h2>
+    <table>
+      <thead><tr><th>Asset</th><th class="num">Sentiment</th><th class="num">Conf.</th><th class="num">Agreement</th></tr></thead>
+      <tbody>
+      {% for s in snap.sentiment %}
+        <tr>
+          <td>{{ s.asset }}{% if s.escalated %} <span class="tag muted">esc</span>{% endif %}</td>
+          <td class="num {% if s.sentiment > 0.1 %}good{% elif s.sentiment < -0.1 %}bad{% endif %}">
+            {{ "{:+.2f}".format(s.sentiment) }}
+          </td>
+          <td class="num">{{ "{:.0%}".format(s.confidence) }}</td>
+          <td class="num">{{ "{:.0%}".format(s.agreement) }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </section>
+  {% endif %}
+</main>
+
+<main class="tab-panel" data-tab-panel="server">
   <!-- Service diagnostics -->
   <section class="card">
     <h2>Service</h2>
@@ -428,12 +484,6 @@ footer { color: var(--muted); font-size: 11px; padding: 16px 24px; text-align: c
         <div class="label">Last rerank</div>
         <div class="value {% if snap.service.last_rerank_age_s is not none and snap.service.last_rerank_age_s > 7200 %}warn{% endif %}">
           {% if snap.service.last_rerank_age_s is not none %}{{ snap.service.last_rerank_age_s|duration }} ago{% else %}—{% endif %}
-        </div>
-      </div>
-      <div class="stat">
-        <div class="label">Heartbeat</div>
-        <div class="value {% if snap.heartbeat_age_s is not none and snap.heartbeat_age_s > 120 %}bad{% endif %}">
-          {% if snap.heartbeat_age_s is not none %}{{ snap.heartbeat_age_s }}s ago{% else %}—{% endif %}
         </div>
       </div>
     </div>
@@ -483,24 +533,25 @@ footer { color: var(--muted); font-size: 11px; padding: 16px 24px; text-align: c
     </div>
   </section>
 
-  <!-- Recent events -->
-  <section class="card" style="grid-column: 1 / -1;">
-    <h2>Recent activity</h2>
-    {% if snap.events.error %}
-      <div class="empty">journalctl: {{ snap.events.error }}</div>
-    {% elif snap.events.events %}
+  <!-- Feed freshness -->
+  <section class="card">
+    <h2>Feed freshness</h2>
+    {% if snap.feed_freshness %}
     <table>
-      <thead><tr><th>When</th><th>Message</th></tr></thead>
+      <thead><tr><th>Source</th><th class="num">Symbols</th><th class="num">Freshest candle</th></tr></thead>
       <tbody>
-      {% for ev in snap.events.events %}
+      {% for f in snap.feed_freshness %}
         <tr>
-          <td style="white-space: nowrap;">{{ (ev.ts_ms / 1000)|int|datetime }}</td>
-          <td style="font-family: ui-monospace, SF Mono, Consolas, monospace; font-size: 12px;">{{ ev.message }}</td>
+          <td>{{ f.label }}</td>
+          <td class="num">{{ f.symbol_count }}</td>
+          <td class="num {% if f.stale %}bad{% endif %}">
+            {% if f.age_s is not none %}{{ f.age_s|duration }} ago{% else %}no candles{% endif %}
+          </td>
         </tr>
       {% endfor %}
       </tbody>
     </table>
-    {% else %}<div class="empty">No matching events in the last 24h.</div>{% endif %}
+    {% else %}<div class="empty">No candle data yet.</div>{% endif %}
   </section>
 
   <!-- Recent errors / warnings -->
@@ -527,33 +578,30 @@ footer { color: var(--muted); font-size: 11px; padding: 16px 24px; text-align: c
     </table>
     {% else %}<div class="empty">No warnings or errors in the last 24h.</div>{% endif %}
   </section>
-
-  <!-- Sentiment -->
-  <section class="card">
-    <h2>Sentiment (latest score per asset)</h2>
-    {% if snap.sentiment %}
-    <table>
-      <thead><tr><th>Asset</th><th class="num">Sentiment</th><th class="num">Conf.</th><th class="num">Agreement</th></tr></thead>
-      <tbody>
-      {% for s in snap.sentiment %}
-        <tr>
-          <td>{{ s.asset }}{% if s.escalated %} <span class="tag muted">esc</span>{% endif %}</td>
-          <td class="num {% if s.sentiment > 0.1 %}good{% elif s.sentiment < -0.1 %}bad{% endif %}">
-            {{ "{:+.2f}".format(s.sentiment) }}
-          </td>
-          <td class="num">{{ "{:.0%}".format(s.confidence) }}</td>
-          <td class="num">{{ "{:.0%}".format(s.agreement) }}</td>
-        </tr>
-      {% endfor %}
-      </tbody>
-    </table>
-    {% else %}<div class="empty">Sentiment overlay disabled or no scores yet.</div>{% endif %}
-  </section>
 </main>
 
 <footer>
   state: {{ state_path }} · db: {{ db_path }} ·
   <a href="/api/snapshot" style="color: var(--muted);">/api/snapshot</a>
 </footer>
+
+<script>
+(function () {
+  var KEY = "tbDashboardTab";
+  var panels = document.querySelectorAll(".tab-panel");
+  var buttons = document.querySelectorAll(".tab-btn");
+  function activate(tab) {
+    panels.forEach(function (p) { p.classList.toggle("active", p.dataset.tabPanel === tab); });
+    buttons.forEach(function (b) { b.classList.toggle("active", b.dataset.tab === tab); });
+    try { localStorage.setItem(KEY, tab); } catch (e) { /* ignore (private mode) */ }
+  }
+  buttons.forEach(function (b) {
+    b.addEventListener("click", function () { activate(b.dataset.tab); });
+  });
+  var saved = "trading";
+  try { saved = localStorage.getItem(KEY) || "trading"; } catch (e) { /* ignore */ }
+  activate(saved);
+})();
+</script>
 </body>
 </html>

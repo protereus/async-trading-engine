@@ -15,6 +15,7 @@ from __future__ import annotations
 import json
 import sqlite3
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -519,3 +520,152 @@ class TestNoResolvedRowsGuard:
         assert data.prediction_vs_realized_path() is None
         assert data.calibration_scatter() is None
         assert data.resolved_signals() == []
+
+
+_MINIMAL_SCHEMA = """
+    CREATE TABLE candles (symbol TEXT, timestamp INTEGER, open REAL, high REAL,
+        low REAL, close REAL, volume REAL, PRIMARY KEY (symbol, timestamp));
+    CREATE TABLE signal_history (id INTEGER PRIMARY KEY AUTOINCREMENT,
+        scored_at INTEGER NOT NULL, symbol TEXT NOT NULL, horizon_bars INTEGER NOT NULL,
+        mean_return REAL, direction_confidence REAL, uncertainty REAL, entry_price REAL,
+        realized_return_at_horizon REAL, gap_spanned INTEGER DEFAULT 0);
+    CREATE TABLE asset_correlations (id INTEGER PRIMARY KEY AUTOINCREMENT,
+        computed_at INTEGER, symbol_a TEXT, symbol_b TEXT, correlation REAL);
+    CREATE TABLE macro_features (series_id TEXT, observation_date INTEGER,
+        value REAL, fetched_at INTEGER, PRIMARY KEY (series_id, observation_date));
+    CREATE TABLE sentiment_scores (scored_at INTEGER, asset TEXT, sentiment REAL,
+        confidence REAL, agreement REAL, sources TEXT, escalated INTEGER,
+        PRIMARY KEY (scored_at, asset));
+"""
+
+
+class TestRiskUtilization:
+    def test_computes_live_risk_against_caps(self, fake_environment: tuple[Path, Path]) -> None:
+        """Total risk-on sums quantity x distance-to-effective-stop per position
+        (mirrors RiskBudgetLedger.live_risk_gbp) against RiskConfig's caps."""
+        db_path, state_path = fake_environment
+        snap = DashboardData(db_path=db_path, state_path=state_path).snapshot()
+        ru = snap["risk_utilization"]
+        assert ru["open_positions"] == 2
+        assert ru["max_open_positions"] == 8
+        assert ru["open_pct_of_cap"] == pytest.approx(25.0)
+        # XAU: 0.06 x (8726.2 - 8289.89) = 26.1786
+        # XAG: 1.08 x (10321.6 - 10138.908) = 197.30736
+        assert ru["total_risk_gbp"] == pytest.approx(223.48596, abs=0.01)
+        assert ru["max_total_risk_pct"] == pytest.approx(0.05)
+        assert ru["total_risk_pct"] == pytest.approx(223.48596 / 20800.0, abs=1e-6)
+        assert ru["risk_pct_of_cap"] == pytest.approx(ru["total_risk_pct"] * 100 / 0.05, abs=1e-3)
+
+    def test_no_open_positions_is_zero_not_error(self, tmp_path: Path) -> None:
+        db_path = tmp_path / "candles.db"
+        state_path = tmp_path / "bot_state.json"
+        conn = sqlite3.connect(db_path)
+        conn.executescript(_MINIMAL_SCHEMA)
+        conn.commit()
+        conn.close()
+        state_path.write_text(json.dumps(_MINIMAL_STATE))
+        snap = DashboardData(db_path=db_path, state_path=state_path).snapshot()
+        ru = snap["risk_utilization"]
+        assert ru["open_positions"] == 0
+        assert ru["total_risk_gbp"] == 0.0
+        assert ru["total_risk_pct"] == 0.0
+        assert ru["open_pct_of_cap"] == 0.0
+
+
+class TestFeedFreshness:
+    def test_groups_by_ig_native_metals_vs_eodhd(self, tmp_path: Path) -> None:
+        db_path = tmp_path / "candles.db"
+        state_path = tmp_path / "bot_state.json"
+        conn = sqlite3.connect(db_path)
+        conn.executescript(_MINIMAL_SCHEMA)
+        now_ms = int(time.time() * 1000)
+        # EUR/USD (EODHD, FX) fresh; XAU/USD (IG-native metal) stale (> 3h old).
+        conn.execute(
+            "INSERT INTO candles VALUES ('EUR/USD', ?, 1.08, 1.09, 1.07, 1.085, 0.0)",
+            (now_ms - 5 * 60_000,),
+        )
+        conn.execute(
+            "INSERT INTO candles VALUES ('XAU/USD', ?, 2400, 2410, 2390, 2405, 0.0)",
+            (now_ms - 4 * 3_600_000,),
+        )
+        conn.commit()
+        conn.close()
+        state_path.write_text(json.dumps(_MINIMAL_STATE))
+
+        data = DashboardData(db_path=db_path, state_path=state_path)
+        groups = {g["label"]: g for g in data.feed_freshness()}
+        eodhd = groups["EODHD (FX + US shares)"]
+        assert eodhd["age_s"] == pytest.approx(300, abs=5)
+        assert eodhd["stale"] is False
+
+        metals = groups["IG-native metals (XAU/XAG)"]
+        assert metals["age_s"] == pytest.approx(4 * 3_600, abs=5)
+        assert metals["stale"] is True
+
+    def test_no_candles_for_a_source_reports_none(self, tmp_path: Path) -> None:
+        db_path = tmp_path / "candles.db"
+        state_path = tmp_path / "bot_state.json"
+        conn = sqlite3.connect(db_path)
+        conn.executescript(_MINIMAL_SCHEMA)
+        conn.commit()
+        conn.close()
+        state_path.write_text(json.dumps(_MINIMAL_STATE))
+
+        data = DashboardData(db_path=db_path, state_path=state_path)
+        for g in data.feed_freshness():
+            assert g["latest_ms"] is None
+            assert g["age_s"] is None
+            assert g["stale"] is False
+
+    def test_twelvedata_failover_relabels_the_non_metal_group(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        db_path = tmp_path / "candles.db"
+        state_path = tmp_path / "bot_state.json"
+        conn = sqlite3.connect(db_path)
+        conn.executescript(_MINIMAL_SCHEMA)
+        conn.commit()
+        conn.close()
+        state_path.write_text(json.dumps(_MINIMAL_STATE))
+
+        monkeypatch.setenv("CANDLE_EXCHANGE", "twelvedata")
+        data = DashboardData(db_path=db_path, state_path=state_path)
+        labels = {g["label"] for g in data.feed_freshness()}
+        assert "TwelveData (failover active)" in labels
+        assert "EODHD (FX + US shares)" not in labels
+
+
+class TestNextRerankCountdown:
+    def test_next_rerank_at_persists_after_in_progress_clears(self, tmp_path: Path) -> None:
+        """RerankStatusWriter merges fields into one cached payload, so
+        next_rerank_at set at the end of a rerank survives in_progress
+        flipping back to false — the always-on header countdown depends on
+        reading the file without rerank_status()'s in_progress gate."""
+        db_path = tmp_path / "candles.db"
+        state_path = tmp_path / "bot_state.json"
+        conn = sqlite3.connect(db_path)
+        conn.executescript(_MINIMAL_SCHEMA)
+        conn.commit()
+        conn.close()
+        state_path.write_text(json.dumps(_MINIMAL_STATE))
+
+        next_rerank_at_s = time.time() + 1800  # 30 min from now
+        rerank_status_path = state_path.parent / "rerank_status.json"
+        rerank_status_path.write_text(
+            json.dumps({"in_progress": False, "phase": "idle", "next_rerank_at": next_rerank_at_s})
+        )
+
+        snap = DashboardData(db_path=db_path, state_path=state_path).snapshot()
+        # Progress banner stays hidden between reranks...
+        assert snap["rerank_progress"] is None
+        # ...but the countdown field is still populated.
+        assert snap["service"]["next_rerank_at_ms"] == pytest.approx(
+            next_rerank_at_s * 1000, abs=1000
+        )
+
+    def test_missing_rerank_status_file_yields_none(
+        self, fake_environment: tuple[Path, Path]
+    ) -> None:
+        db_path, state_path = fake_environment
+        snap = DashboardData(db_path=db_path, state_path=state_path).snapshot()
+        assert snap["service"]["next_rerank_at_ms"] is None

@@ -348,6 +348,27 @@ _TQDM_RE = re.compile(
 )
 
 
+def read_rerank_status_raw(status_path: Path) -> dict[str, Any] | None:
+    """Read ``rerank_status.json`` verbatim, regardless of ``in_progress``.
+
+    ``RerankStatusWriter`` merges fields into one cached payload and rewrites
+    the whole file on every update (``src/bot/state/rerank_status.py``), so
+    fields like ``next_rerank_at`` set at the end of a rerank persist in the
+    file after ``in_progress`` flips back to false. Use this (rather than
+    :func:`rerank_status`) for fields that should stay visible between
+    reranks, not just during one.
+
+    Returns ``None`` if the file is missing or unreadable (older bot version,
+    or webgui started before the bot ever ran a rerank).
+    """
+    try:
+        with status_path.open("rb") as f:
+            data: dict[str, Any] = json.loads(f.read())
+    except (OSError, json.JSONDecodeError):
+        return None
+    return data
+
+
 def rerank_status(status_path: Path) -> dict[str, Any] | None:
     """Read the bot-written ``rerank_status.json`` next to ``bot_state.json``.
 
@@ -357,18 +378,14 @@ def rerank_status(status_path: Path) -> dict[str, Any] | None:
     balance fetch, Telegram alert — were still running).  Now the bot writes
     every phase boundary to the file, so the dashboard always sees the truth.
 
-    Returns ``None`` if the file is missing or unreadable (older bot version,
-    or webgui started before the bot ever ran a rerank).  Returns ``None``
-    when ``in_progress`` is false so the progress bar hides between reranks
-    — the next-rerank timestamp is still exposed via the snapshot's
-    ``service.next_rerank_at`` field for the always-on display.
+    Returns ``None`` if the file is missing or unreadable, or when
+    ``in_progress`` is false so the progress bar hides between reranks — the
+    next-rerank timestamp is still exposed via the snapshot's
+    ``service.next_rerank_at_ms`` field (see :func:`read_rerank_status_raw`)
+    for the always-on display.
     """
-    try:
-        with status_path.open("rb") as f:
-            data: dict[str, Any] = json.loads(f.read())
-    except (OSError, json.JSONDecodeError):
-        return None
-    if not data.get("in_progress"):
+    data = read_rerank_status_raw(status_path)
+    if not data or not data.get("in_progress"):
         return None
     return data
 

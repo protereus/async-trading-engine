@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import array
 import json
+import os
 import sqlite3
 import sys
 import time
@@ -24,8 +25,10 @@ from pathlib import Path
 from typing import Any
 
 from bot.data.eodhd_symbols import EODHD_UNIVERSE
+from bot.data.ig_candle_aggregator import IG_NATIVE_CANDLE_SYMBOLS
 from bot.execution.ig_quote_scale import ig_display_price as _ig_display_price
 from bot.execution.ig_quote_scale import ig_quote_scale as _ig_quote_scale
+from bot.risk.risk_config import RiskConfig
 from bot.trading_hours import (
     MARKET_CATEGORIES,
     is_market_open,
@@ -40,10 +43,42 @@ from webgui.diagnostics import (
     journalctl_errors,
     journalctl_events,
     process_memory_mb,
+    read_rerank_status_raw,
     rerank_progress,
     rerank_status,
     systemd_status,
 )
+
+# Same construction as ``main.py``'s ``risk_config = RiskConfig()`` — no env
+# overrides exist for these fields (plain pydantic BaseModel, not
+# BaseSettings), so the class defaults *are* the live values.
+_RISK_DEFAULTS = RiskConfig()
+
+# Mirrors ``bot.monitoring.health._FEED_STALENESS_MS`` (3h) for the freshness
+# panel's stale styling — hourly bars confirm at each :00, so a healthy feed's
+# latest candle is normally < 1h old.
+_FEED_STALENESS_S = 3 * 3_600
+
+
+def _risk_utilization(
+    open_positions: int, total_risk_gbp: float, equity: float, caps: RiskConfig
+) -> dict[str, Any]:
+    """Open-position count / total risk-on vs the entry-gating caps, plus
+    0-100 bar-width percentages pre-clamped for the template."""
+    total_risk_pct = (total_risk_gbp / equity) if equity > 0 else 0.0
+    return {
+        "open_positions": open_positions,
+        "max_open_positions": caps.max_open_positions,
+        "open_pct_of_cap": min(100.0, open_positions * 100.0 / caps.max_open_positions)
+        if caps.max_open_positions
+        else 0.0,
+        "total_risk_gbp": total_risk_gbp,
+        "total_risk_pct": total_risk_pct,
+        "max_total_risk_pct": caps.max_total_risk_pct,
+        "risk_pct_of_cap": min(100.0, total_risk_pct * 100.0 / caps.max_total_risk_pct)
+        if caps.max_total_risk_pct
+        else 0.0,
+    }
 
 
 def _ro_conn(db_path: Path) -> sqlite3.Connection:
@@ -119,6 +154,45 @@ class DashboardData:
         if row is None:
             return None
         return int(row["timestamp"]), float(row["close"])
+
+    def feed_freshness(self) -> list[dict[str, Any]]:
+        """Last-candle age per candle source, for the diagnostics tab.
+
+        Metals (XAU/XAG) are IG-native since 2026-06-19 (``IG_NATIVE_CANDLE_SYMBOLS``,
+        mirroring ``HealthMonitor._check_feed_staleness``'s grouping); everything
+        else is EODHD-sourced except during a TwelveData failover. ``candles``
+        has no per-row source column, so which provider is *live* for the
+        non-metal group comes from the ``CANDLE_EXCHANGE`` env var, not the DB.
+        """
+        now_ms = int(time.time() * 1000)
+        with _ro_conn(self._db_path) as con:
+            rows = con.execute(
+                "SELECT symbol, MAX(timestamp) AS ts FROM candles GROUP BY symbol"
+            ).fetchall()
+        freshest_by_symbol: dict[str, int] = {
+            r["symbol"]: int(r["ts"]) for r in rows if r["ts"] is not None
+        }
+        metals = {s for s in EODHD_UNIVERSE if s in IG_NATIVE_CANDLE_SYMBOLS}
+        others = {s for s in EODHD_UNIVERSE if s not in IG_NATIVE_CANDLE_SYMBOLS}
+        primary_label = (
+            "TwelveData (failover active)"
+            if os.environ.get("CANDLE_EXCHANGE", "eodhd") == "twelvedata"
+            else "EODHD (FX + US shares)"
+        )
+
+        def _group(label: str, symbols: set[str]) -> dict[str, Any]:
+            ts_values = [freshest_by_symbol[s] for s in symbols if s in freshest_by_symbol]
+            latest_ms = max(ts_values) if ts_values else None
+            age_s = (now_ms - latest_ms) // 1000 if latest_ms is not None else None
+            return {
+                "label": label,
+                "symbol_count": len(symbols),
+                "latest_ms": latest_ms,
+                "age_s": age_s,
+                "stale": age_s is not None and age_s > _FEED_STALENESS_S,
+            }
+
+        return [_group(primary_label, others), _group("IG-native metals (XAU/XAG)", metals)]
 
     def latest_signals(self, limit: int = 28) -> list[dict[str, Any]]:
         """Return the most recent rerank's signal_history rows, ranked by mean_return.
@@ -525,6 +599,16 @@ class DashboardData:
                     "stop_display": stop_display,
                 }
             )
+        # Risk-on utilization vs the entry-gating caps (RiskConfig defaults —
+        # ``risk.py`` gate 6b).  ``stop_level_ig`` above already folds in any
+        # armed trailing stop, so this mirrors ``RiskBudgetLedger.live_risk_gbp``
+        # (quantity × remaining distance to the effective stop) without needing
+        # the separately-persisted ``risk_budgets`` ledger.
+        total_risk_gbp = sum(
+            p["quantity"] * max(0.0, p["entry_price"] - p["stop_level_ig"])
+            for p in positions
+            if p["stop_level_ig"] is not None
+        )
         risk = state.get("risk", {})
         last_heartbeat = int(state.get("last_heartbeat", 0))
         heartbeat_age_s = (now_ms - last_heartbeat) // 1000 if last_heartbeat else None
@@ -549,7 +633,11 @@ class DashboardData:
             "heartbeat_age_s": heartbeat_age_s,
             "bot_started_at_ms": int(state.get("bot_started_at", 0)),
             "positions": positions,
+            "risk_utilization": _risk_utilization(
+                len(positions), total_risk_gbp, equity, _RISK_DEFAULTS
+            ),
             "markets": self.market_reference(),
+            "feed_freshness": self.feed_freshness(),
             "signals": self.latest_signals(),
             "accuracy": self.signal_accuracy(),
             "prediction_path": self.prediction_vs_realized_path(),
@@ -580,6 +668,14 @@ class DashboardData:
         info["last_rerank_ms"] = last_scored_at
         info["last_rerank_age_s"] = (
             int(time.time()) - last_scored_at // 1000 if last_scored_at else None
+        )
+        # ``next_rerank_at`` (wall-clock seconds) persists in rerank_status.json
+        # across reranks — read raw (bypassing rerank_status()'s in_progress
+        # gate) so the always-on countdown keeps working between reranks.
+        raw_status = read_rerank_status_raw(self._rerank_status_path)
+        next_rerank_at = raw_status.get("next_rerank_at") if raw_status else None
+        info["next_rerank_at_ms"] = (
+            int(next_rerank_at * 1000) if isinstance(next_rerank_at, (int, float)) else None
         )
         return info
 
