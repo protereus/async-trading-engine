@@ -550,12 +550,19 @@ class IGClient:
 
         if status == OrderStatus.REJECTED:
             reason = data.get("reason", "unknown")
-            logger.error("Order rejected: dealReference=%s reason=%s", deal_reference, reason)
             if "MARKET_CLOSED" in reason or "MARKET_OFFLINE" in reason:
+                # Benign — the position/entry is deferred and retried once the
+                # market reopens (see MarketClosedError callers); not a real error.
+                logger.warning(
+                    "Order rejected (market closed, deferred): dealReference=%s reason=%s",
+                    deal_reference,
+                    reason,
+                )
                 raise MarketClosedError(
                     f"IG market closed for {deal_reference}: {reason}",
                     ErrorType.MARKET_CLOSED,
                 )
+            logger.error("Order rejected: dealReference=%s reason=%s", deal_reference, reason)
             raise ExchangeError(
                 f"IG rejected order {deal_reference}: {reason}",
                 ErrorType.INVALID_ORDER,
