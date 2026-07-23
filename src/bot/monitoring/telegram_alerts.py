@@ -104,8 +104,8 @@ class TelegramAlerter:
                     return False
             self._send_times.append(time.time())
             return True
-        except Exception as exc:
-            logger.error("Alert send exception: %s", exc)
+        except Exception:
+            logger.exception("Alert send exception")
             return False
 
     # ------------------------------------------------------------------

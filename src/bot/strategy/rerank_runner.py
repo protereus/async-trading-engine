@@ -788,8 +788,8 @@ class RerankRunner:
             balance = await ctx.ig_client.fetch_balance()
             equity_gbp = balance["equity"]
             margin_used = balance["margin"]
-        except Exception as exc:
-            logger.warning("Could not fetch IG balance: %s", exc)
+        except Exception:
+            logger.warning("Could not fetch IG balance", exc_info=True)
             return None, None
 
         logger.info("TopK balance: %s equity=%.2f margin=%.2f", epic, equity_gbp, margin_used)
