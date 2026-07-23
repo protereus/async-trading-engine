@@ -57,9 +57,14 @@ class Lifecycle:
     def init_ig(self) -> None:
         """Wire IG-specific subsystems."""
         from bot.execution.ig_client import IGClient
+        from bot.risk.spread_monitor import SpreadMonitor
 
         ctx = self._ctx
         ctx.ig_client = IGClient(ctx.config)
+
+        # Construct once here (composition root) so the pre-trade
+        # spread gate runs regardless of which candle feed ends up live.
+        ctx.spread_monitor = SpreadMonitor()
 
         if ctx.config.candle_exchange == "ig":
             from bot.data.ig_feed import IGFeed
@@ -70,6 +75,7 @@ class Lifecycle:
                 ctx.event_bus,
                 ctx.config,
                 candle_db=ctx.candle_db,
+                spread_monitor=ctx.spread_monitor,
             )
 
         if ctx.config.topk_enabled:
@@ -131,6 +137,7 @@ class Lifecycle:
                 ctx.event_bus,
                 ctx.config,
                 candle_db=ctx.candle_db,
+                spread_monitor=ctx.spread_monitor,
             )
             return asyncio.create_task(ctx.eodhd_feed.run(), name="eodhd_feed")
         raise ValueError(
@@ -304,6 +311,7 @@ class Lifecycle:
                 ctx.event_bus,
                 ctx.config,
                 candle_db=ctx.candle_db,
+                spread_monitor=ctx.spread_monitor,
             )
             ig_candle_task = asyncio.create_task(ctx.ig_candle_feed.run(), name="ig_candle_feed")
             ctx.tasks.append(ig_candle_task)

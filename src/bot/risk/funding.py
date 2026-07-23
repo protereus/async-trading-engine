@@ -29,9 +29,12 @@ that via the sign of the returned figure.
 
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime
 
 from bot.risk.ig_margin import AssetClass, classify_symbol
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Admin markups (annualised) — IG_LIVE_RISK_REFERENCE.md §5
@@ -173,3 +176,32 @@ def estimate_funding_over_horizon_pct(
         roll_day = roll_ts + timedelta(days=d)
         total += daily_funding_pct(asset_class=asset_class, side=side, now_utc=roll_day)
     return total
+
+
+def log_overnight_funding_estimate(symbol: str, size_per_pt: float, ig_level: float) -> None:
+    """Log the GBP cost of the *next* overnight roll for a new LONG
+    position.  Includes Wed (FX) and Fri (equities/commodities) ×3 multipliers
+    so the operator sees the realistic carry, not a generic hour-of-day
+    warning.  Cheap: only fires at order-placement time."""
+    if size_per_pt <= 0 or ig_level <= 0:
+        return
+    now_utc = datetime.now(UTC)
+    cost_gbp = estimate_overnight_cost_gbp(
+        symbol=symbol,
+        size_per_pt=size_per_pt,
+        ig_level=ig_level,
+        side="BUY",
+        now_utc=now_utc,
+    )
+    triple = ""
+    if is_fx_triple_day(now_utc):
+        triple = " (Wed FX ×3)"
+    elif is_equity_triple_day(now_utc):
+        triple = " (Fri equity ×3)"
+    logger.info(
+        "Overnight funding estimate: %s LONG £%.2f/pt → next-roll cost £%.2f%s",
+        symbol,
+        size_per_pt,
+        cost_gbp,
+        triple,
+    )

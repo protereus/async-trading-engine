@@ -62,6 +62,7 @@ if TYPE_CHECKING:
     from bot.data.candle_db import CandleDB
     from bot.data.store import DataStore
     from bot.execution.ig_client import IGClient
+    from bot.risk.spread_monitor import SpreadMonitor
 
 logger = logging.getLogger(__name__)
 
@@ -176,12 +177,19 @@ class IGCandleLSFeed:
         event_bus: EventBus,
         config: BotConfig,
         candle_db: CandleDB | None = None,
+        spread_monitor: SpreadMonitor | None = None,
     ) -> None:
         self._client = client
         self._store = store
         self._event_bus = event_bus
         self._config = config
         self._candle_db = candle_db
+        self._spread_monitor = spread_monitor
+        # Last observed (bid, ask) per symbol from LS ticks; sampled
+        # into spread_monitor once per confirmed candle close (see
+        # _emit_aggregated_candle), matching spread_monitor.py's documented
+        # once-per-candle sampling cadence.
+        self._last_bid_ask: dict[str, tuple[float, float]] = {}
 
         self._epic_to_symbol: dict[str, str] = _epic_to_canonical_map()
         self._aggregator = IGCandleAggregator(emit_callback=self._emit_aggregated_candle)
@@ -468,6 +476,7 @@ class IGCandleLSFeed:
         ofr_close = _safe_float(fields.get("OFR_CLOSE"))
         if bid_close <= 0 or ofr_close <= 0:
             return
+        self._last_bid_ask[symbol] = (bid_close, ofr_close)
         mid = (bid_close + ofr_close) / 2.0
 
         utm_ms = _utm_to_utc_ms(fields.get("UTM", ""))
@@ -497,6 +506,15 @@ class IGCandleLSFeed:
                     candle.symbol,
                     candle.timestamp,
                 )
+        # Sample the bid-ask spread once per confirmed candle, using
+        # the most recent LS tick's bid/offer close.
+        if self._spread_monitor is not None:
+            bid_ask = self._last_bid_ask.get(candle.symbol)
+            if bid_ask is not None:
+                bid_close, ofr_close = bid_ask
+                spread_pts = ofr_close - bid_close
+                if spread_pts > 0:
+                    self._spread_monitor.record(candle.symbol, spread_pts)
         if self._loop is not None:
             self._loop.create_task(self._event_bus.emit(EVENT_NEW_CANDLE, candle))
         logger.info(

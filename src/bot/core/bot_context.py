@@ -90,6 +90,10 @@ class BotContext:
 
     # --- broker / strategy / feed objects (populated by Lifecycle) ---
     ig_client: Any = None  # IGClient — always set by Lifecycle.init_ig()
+    # Spread-anomaly detector — always set by Lifecycle.init_ig() so the
+    # pre-trade gate runs regardless of which candle feed is live (EODHD,
+    # IG-native metals, or the legacy all-IG path).
+    spread_monitor: Any = None
     ig_feed: Any = None  # IGFeed — set when candle_exchange="ig"
     # IGCandleLSFeed — D1 IG-native candle aggregator (any IG path)
     ig_candle_feed: Any = None

@@ -2,8 +2,6 @@
 
 Extracted from ``main.py``.  Pure functions with no class state:
 
-* ``log_overnight_funding_estimate`` — overnight funding cost preview at order
-  placement (with Wed/Fri ×3 multipliers).
 * ``safe_float`` — best-effort float parse for IG ``str | float | None`` fields.
 * ``parse_ig_pnl`` — parses IG's ``profitAndLoss`` strings
   (``"E-12.30"``, ``"-£12.30"``, ``"£+5.40"``, etc.) into a signed float.
@@ -26,43 +24,6 @@ logger = logging.getLogger(__name__)
 # via ``IG_MIN_STOP_PCT.get(epic, 0.0)`` so the empty dict is a deliberate
 # no-op default rather than a placeholder.
 IG_MIN_STOP_PCT: dict[str, float] = {}
-
-
-def log_overnight_funding_estimate(symbol: str, size_per_pt: float, ig_level: float) -> None:
-    """Log the GBP cost of the *next* overnight roll for a new LONG
-    position.  Includes Wed (FX) and Fri (equities/commodities) ×3 multipliers
-    so the operator sees the realistic carry, not a generic hour-of-day
-    warning.  Cheap: only fires at order-placement time."""
-    from datetime import UTC, datetime
-
-    from bot.risk.funding import (
-        estimate_overnight_cost_gbp,
-        is_equity_triple_day,
-        is_fx_triple_day,
-    )
-
-    if size_per_pt <= 0 or ig_level <= 0:
-        return
-    now_utc = datetime.now(UTC)
-    cost_gbp = estimate_overnight_cost_gbp(
-        symbol=symbol,
-        size_per_pt=size_per_pt,
-        ig_level=ig_level,
-        side="BUY",
-        now_utc=now_utc,
-    )
-    triple = ""
-    if is_fx_triple_day(now_utc):
-        triple = " (Wed FX ×3)"
-    elif is_equity_triple_day(now_utc):
-        triple = " (Fri equity ×3)"
-    logger.info(
-        "Overnight funding estimate: %s LONG £%.2f/pt → next-roll cost £%.2f%s",
-        symbol,
-        size_per_pt,
-        cost_gbp,
-        triple,
-    )
 
 
 def safe_float(v: Any) -> float:

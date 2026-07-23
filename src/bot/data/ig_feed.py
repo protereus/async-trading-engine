@@ -67,6 +67,7 @@ if TYPE_CHECKING:
     from bot.data.candle_db import CandleDB
     from bot.data.store import DataStore
     from bot.execution.ig_client import IGClient
+    from bot.risk.spread_monitor import SpreadMonitor
 
 logger = logging.getLogger(__name__)
 
@@ -97,6 +98,7 @@ class IGFeed:
         event_bus: EventBus,
         config: BotConfig,
         candle_db: CandleDB | None = None,
+        spread_monitor: SpreadMonitor | None = None,
     ) -> None:
         self._client = client
         self._store = store
@@ -119,13 +121,16 @@ class IGFeed:
         self._tick_validator = TickValidator()
 
         # Per-epic spread anomaly detector.  Sampled once per confirmed
-        # candle close in handle_chart_update; pre-trade gate in main.py
-        # refuses entries when the live spread > mean + 2σ of the rolling
-        # window.  Exposed as a property so main can read without reaching
-        # into a private attribute.
-        from bot.risk.spread_monitor import SpreadMonitor
+        # candle close in handle_chart_update; pre-trade gate reads
+        # ctx.spread_monitor directly.  Injected from the composition root
+        # (Lifecycle.init_ig) so the legacy 'ig' path shares the same
+        # instance as the live EODHD/IG-candle paths; falls back to a fresh
+        # instance when constructed standalone (e.g. in tests).
+        if spread_monitor is None:
+            from bot.risk.spread_monitor import SpreadMonitor as _SpreadMonitor
 
-        self._spread_monitor = SpreadMonitor()
+            spread_monitor = _SpreadMonitor()
+        self._spread_monitor = spread_monitor
 
         # Reconnect state — shared with IGLSConnection.
         self._reconnect_scheduled = False

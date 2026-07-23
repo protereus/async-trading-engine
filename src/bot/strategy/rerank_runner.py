@@ -37,16 +37,13 @@ import numpy as np
 from bot.core.event_bus import EVENT_NEW_CANDLE, EVENT_ORDER_FILLED
 from bot.core.models import Candle, ExchangeError, IGOrderRequest, MarketClosedError
 from bot.data.candle_db import SignalHistoryRow
-from bot.execution.ig_convert import (
-    IG_MIN_STOP_PCT,
-    apply_sentiment_gate,
-    log_overnight_funding_estimate,
-)
+from bot.execution.ig_convert import IG_MIN_STOP_PCT, apply_sentiment_gate
 from bot.execution.ig_quote_scale import (
     ig_display_price,
     ig_pip_value,
     ig_quote_scale,
 )
+from bot.risk.funding import log_overnight_funding_estimate
 from bot.risk.ig_margin import estimate_margin_gbp as ig_margin_estimate
 from bot.risk.ig_margin import estimate_slippage_pts as ig_slippage_pts
 from bot.risk.risk_manager import RiskManager
@@ -876,10 +873,11 @@ class RerankRunner:
         ctx = self._ctx
         # Refuse new entries when the live bid-ask spread is anomalously
         # wide (> mean + 2σ of the 30-day rolling window).  Quiet no-op until
-        # the window has enough history primed in.
-        if ctx.ig_feed is not None and ctx.ig_feed.spread_monitor.is_anomalous(epic):
-            current = ctx.ig_feed.spread_monitor.latest_spread(epic)
-            stats = ctx.ig_feed.spread_monitor.stats(epic)
+        # the window has enough history primed in.  ctx.spread_monitor is
+        # always set by Lifecycle.init_ig() regardless of candle_exchange.
+        if ctx.spread_monitor is not None and ctx.spread_monitor.is_anomalous(epic):
+            current = ctx.spread_monitor.latest_spread(epic)
+            stats = ctx.spread_monitor.stats(epic)
             if stats is not None:
                 mean, stdev = stats
                 logger.warning(

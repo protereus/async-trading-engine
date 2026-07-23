@@ -57,6 +57,7 @@ if TYPE_CHECKING:
     from bot.core.event_bus import EventBus
     from bot.data.candle_db import CandleDB
     from bot.data.store import DataStore
+    from bot.risk.spread_monitor import SpreadMonitor
 
 logger = logging.getLogger(__name__)
 
@@ -119,11 +120,18 @@ class EODHDFeed:
         config: BotConfig,
         candle_db: CandleDB | None = None,
         market_open: Callable[[str], bool] = is_market_open,
+        spread_monitor: SpreadMonitor | None = None,
     ) -> None:
         self._store = store
         self._event_bus = event_bus
         self._config = config
         self._candle_db = candle_db
+        self._spread_monitor = spread_monitor
+        # Last observed (bid, ask) per bot_key from the forex WS
+        # stream; sampled into spread_monitor once per confirmed candle
+        # close (see _emit_aggregated_candle) to match the documented
+        # sampling cadence in spread_monitor.py, not every raw tick.
+        self._last_bid_ask: dict[str, tuple[float, float]] = {}
         # Metals (IG_NATIVE_CANDLE_SYMBOLS) are sourced from the IG-native
         # Lightstreamer feed (IGCandleLSFeed), not EODHD — exclude them from both
         # REST backfill and the live WS subscription so the two feeds own
@@ -553,6 +561,7 @@ class EODHDFeed:
             bid, ask = d.get("b"), d.get("a")
             if bid is None or ask is None:
                 return
+            self._last_bid_ask[bot_key] = (float(bid), float(ask))
             price = (float(bid) + float(ask)) / 2.0
             ltv = 0.0
         else:
@@ -584,6 +593,16 @@ class EODHDFeed:
                     "EODHD: candle_db insert failed for %s @ %d", candle.symbol, candle.timestamp
                 )
         self._last_confirmed[candle.symbol] = candle.timestamp
+        # Sample the bid-ask spread once per confirmed candle, using
+        # the most recent forex tick's bid/ask (no bid/ask for 'us' frames,
+        # so this is a no-op there).
+        if self._spread_monitor is not None:
+            bid_ask = self._last_bid_ask.get(candle.symbol)
+            if bid_ask is not None:
+                bid, ask = bid_ask
+                spread_pts = ask - bid
+                if spread_pts > 0:
+                    self._spread_monitor.record(candle.symbol, spread_pts)
         if self._loop is not None:
             self._loop.create_task(self._event_bus.emit(EVENT_NEW_CANDLE, candle))
         logger.info(
