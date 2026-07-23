@@ -35,19 +35,7 @@ If we ever scale past that we revisit; for now the flat Tier-1 rates suffice.
 
 from __future__ import annotations
 
-from enum import StrEnum
-
-from bot.data.eodhd_symbols import EODHD_UNIVERSE
-
-
-class AssetClass(StrEnum):
-    FOREX_MAJOR = "forex_major"
-    FOREX_MINOR = "forex_minor"
-    INDEX_MAJOR = "index_major"
-    SPOT_GOLD = "spot_gold"
-    COMMODITY = "commodity"  # silver, oil, gas, copper, sovereign bonds
-    EQUITY_ETF = "equity_etf"  # only if traded as direct equity, not index DFB
-
+from bot.data.eodhd_symbols import EODHD_UNIVERSE, AssetClass
 
 # Retail margin floors per IG_LIVE_RISK_REFERENCE.md §4.1.
 MARGIN_RATES: dict[AssetClass, float] = {
@@ -123,7 +111,7 @@ def classify_symbol(symbol: str) -> AssetClass:
     """
     eodhd = EODHD_UNIVERSE.get(symbol)
     if eodhd is not None:
-        return AssetClass(eodhd.ig_margin_class)
+        return eodhd.ig_margin_class
     if symbol in _SYMBOL_ASSET_CLASS:
         return _SYMBOL_ASSET_CLASS[symbol]
     if "/" in symbol:

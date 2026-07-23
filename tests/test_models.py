@@ -7,14 +7,12 @@ import pytest
 from bot.core.models import (
     BotState,
     Candle,
-    Direction,
     ErrorType,
     OrderResult,
     OrderSide,
     OrderStatus,
     OrderType,
     Position,
-    Signal,
 )
 
 
@@ -37,25 +35,6 @@ class TestCandle:
         c = Candle(1, 1.0, 2.0, 0.5, 1.5, 100.0, "AVAX/USDT", True)
         with pytest.raises((AttributeError, TypeError)):
             c.close = 99.0  # type: ignore[misc]
-
-
-class TestSignal:
-    def test_creation(self) -> None:
-        s = Signal(
-            timestamp=1_700_000_000_000,
-            symbol="AVAX/USDT",
-            direction=Direction.LONG,
-            strength=0.8,
-            strategy_name="test_strategy",
-            metadata={"rsi": 40.0},
-        )
-        assert s.direction == Direction.LONG
-        assert s.strength == 0.8
-
-    def test_direction_enum(self) -> None:
-        assert Direction.LONG.value == "long"
-        assert Direction.SHORT.value == "short"
-        assert Direction.FLAT.value == "flat"
 
 
 class TestOrderResult:

@@ -586,8 +586,7 @@ class TestRerankPositionsStopColumn:
 
     async def test_position_without_stop_keys_renders_unchanged(self) -> None:
         """Backward-compat: callers that don't supply stop info still get
-        a position line, just without the stop suffix.  Important for tests
-        that fake a position via dataclass-style object access (no .get())."""
+        a position line, just without the stop suffix."""
         alerter = _alerter()
         captured: list[str] = []
 

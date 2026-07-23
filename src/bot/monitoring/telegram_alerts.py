@@ -178,7 +178,7 @@ class TelegramAlerter:
         selected: list[str],
         k: int,
         *,
-        positions: dict[str, Any] | None = None,
+        positions: dict[str, dict[str, Any]] | None = None,
         risk_summary: dict[str, Any] | None = None,
         current_prices: dict[str, float] | None = None,
         equity: float | None = None,
@@ -245,19 +245,13 @@ class TelegramAlerter:
             prices = current_prices or {}
             for sym, pos in positions.items():
                 label = _label(sym)
-                entry = (
-                    pos.entry_price if hasattr(pos, "entry_price") else pos.get("entry_price", 0)
-                )
-                qty = pos.quantity if hasattr(pos, "quantity") else pos.get("quantity", 0)
-                # Stop level + stop_pct are dict-only (added 2026-06-01 so
-                # the rerank alert tells the operator where IG would stop
-                # the position out without having to open the dashboard).
-                stop_price: float | None = (
-                    None if hasattr(pos, "entry_price") else pos.get("stop_price")
-                )
-                stop_pct: float | None = (
-                    None if hasattr(pos, "entry_price") else pos.get("stop_pct")
-                )
+                entry = pos.get("entry_price", 0)
+                qty = pos.get("quantity", 0)
+                # Stop level + stop_pct (added 2026-06-01 so the rerank
+                # alert tells the operator where IG would stop the
+                # position out without having to open the dashboard).
+                stop_price: float | None = pos.get("stop_price")
+                stop_pct: float | None = pos.get("stop_pct")
                 stop_suffix = ""
                 if stop_price is not None and stop_pct is not None:
                     stop_suffix = f" stop={stop_price:.4f} (-{stop_pct * 100:.2f}%)"

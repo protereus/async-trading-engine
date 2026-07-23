@@ -11,12 +11,6 @@ from typing import Any, Literal, TypedDict
 # ---------------------------------------------------------------------------
 
 
-class Direction(StrEnum):
-    LONG = "long"
-    SHORT = "short"
-    FLAT = "flat"
-
-
 class OrderSide(StrEnum):
     BUY = "buy"
     SELL = "sell"
@@ -165,18 +159,6 @@ class Candle:
 
 
 @dataclass(frozen=True)
-class Signal:
-    """Trading signal emitted by a strategy."""
-
-    timestamp: int
-    symbol: str
-    direction: Direction
-    strength: float  # 0.0 - 1.0
-    strategy_name: str
-    metadata: dict[str, Any] = field(default_factory=dict)
-
-
-@dataclass(frozen=True)
 class IGOrderRequest:
     """Request to place an IG spread bet position.
 
@@ -253,6 +235,14 @@ class RiskEvent:
     details: dict[str, Any]
     resolved: bool = False
     resolved_at: int | None = None
+
+
+@dataclass(frozen=True)
+class PositionClosed:
+    """Payload for ``EVENT_POSITION_CLOSED`` — realised P&L on a SELL fill."""
+
+    symbol: str
+    pnl: float
 
 
 @dataclass(frozen=True)

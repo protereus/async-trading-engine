@@ -42,6 +42,7 @@ from bot.core.models import (
     MarginBreakerEvent,
     OrderResult,
     OrderSide,
+    PositionClosed,
     RiskEvent,
 )
 from bot.execution.ig_quote_scale import ig_quote_scale
@@ -177,12 +178,12 @@ class EventWiring:
             if pnl_for_event is not None:
                 await ctx.event_bus.emit(
                     EVENT_POSITION_CLOSED,
-                    {"symbol": data.symbol, "pnl": pnl_for_event},
+                    PositionClosed(symbol=data.symbol, pnl=pnl_for_event),
                 )
 
     async def handle_position_closed(self, data: Any) -> None:
-        if isinstance(data, dict):
-            self._ctx.risk_manager.on_position_closed(data["symbol"], float(data["pnl"]))
+        if isinstance(data, PositionClosed):
+            self._ctx.risk_manager.on_position_closed(data.symbol, data.pnl)
 
     async def handle_risk_alert(self, data: Any) -> None:
         if isinstance(data, RiskEvent):

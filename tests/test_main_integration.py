@@ -1385,7 +1385,7 @@ class TestOrderFilledHandler:
         assert "EUR/USD" not in bot.ctx.state.positions
         # Allow the dispatch hop
         await asyncio.sleep(0)
-        assert any(e.get("symbol") == "CS.D.EURUSD.TODAY.IP" for e in emitted_events)
+        assert any(e.symbol == "CS.D.EURUSD.TODAY.IP" for e in emitted_events)
 
     @pytest.mark.asyncio
     async def test_buy_fill_jpy_alert_uses_fx_rate_display(self, bot: TradingBot) -> None:

@@ -20,7 +20,8 @@ Each symbol carries everything the feed, strategy, and risk modules need:
 * ``ig_pip_value``   — IG point size in candle-source price units. ``ig_quote_scale``
                        consults this first (EODHD-first), so the IG-side stop /
                        level math is correct without touching the TD tables.
-* ``ig_margin_class``— ``bot.risk.ig_margin.AssetClass`` value for margin/slippage.
+* ``ig_margin_class``— ``AssetClass`` value (this module) for margin/slippage,
+                       re-exported by ``bot.risk.ig_margin``.
 * ``sector``         — ``bot.risk.sectors`` bucket for the concentration cap.
 
 Metals nuance: since 2026-06-19 gold/silver are **IG-native** — candles stream
@@ -35,10 +36,25 @@ from the GLD/SLV ETFs on a calibrated cross-instrument scale.)
 from __future__ import annotations
 
 from dataclasses import dataclass
+from enum import StrEnum
 from typing import Literal
 
 WsEndpoint = Literal["forex", "us"]
-AssetClass = Literal["forex", "metal", "equity"]
+CoarseAssetClass = Literal["forex", "metal", "equity"]
+
+
+class AssetClass(StrEnum):
+    """IG retail margin/slippage classification — see ``bot.risk.ig_margin``
+    (which imports this rather than defining its own copy, to avoid a
+    circular import back through ``EODHD_UNIVERSE``)."""
+
+    FOREX_MAJOR = "forex_major"
+    FOREX_MINOR = "forex_minor"
+    INDEX_MAJOR = "index_major"
+    SPOT_GOLD = "spot_gold"
+    COMMODITY = "commodity"  # silver, oil, gas, copper, sovereign bonds
+    EQUITY_ETF = "equity_etf"  # only if traded as direct equity, not index DFB
+
 
 # Pairs IG counts as "major" for retail margin (3.33 %); the rest are minors (5 %).
 # Mirrors ``ig_margin._SYMBOL_ASSET_CLASS`` so the two never disagree.
@@ -64,10 +80,10 @@ class EODHDSymbol:
     eodhd_rest: str
     ws_endpoint: WsEndpoint
     ig_epic: str
-    asset_class: AssetClass
+    asset_class: CoarseAssetClass
     has_volume: bool
     ig_pip_value: float
-    ig_margin_class: str
+    ig_margin_class: AssetClass
     sector: str
 
     @property
@@ -96,12 +112,14 @@ def _fx(bot_key: str, ig_epic: str) -> EODHDSymbol:
         has_volume=False,
         # JPY-quoted pairs are 2dp (pip 0.01); all others 4dp (pip 0.0001).
         ig_pip_value=0.01 if bot_key.endswith("/JPY") else 0.0001,
-        ig_margin_class="forex_major" if bot_key in _FX_MAJORS else "forex_minor",
+        ig_margin_class=AssetClass.FOREX_MAJOR if bot_key in _FX_MAJORS else AssetClass.FOREX_MINOR,
         sector=_fx_sector(bot_key),
     )
 
 
-def _metal(bot_key: str, etf: str, ig_epic: str, pip: float, margin_class: str) -> EODHDSymbol:
+def _metal(
+    bot_key: str, etf: str, ig_epic: str, pip: float, margin_class: AssetClass
+) -> EODHDSymbol:
     """Gold/silver: candles + order both on the IG spot metal (24/5).
 
     Since 2026-06-19 metals are IG-native (``IGCandleLSFeed`` streams the spot
@@ -134,7 +152,7 @@ def _eq(bot_key: str, ig_epic: str, sector: str) -> EODHDSymbol:
         asset_class="equity",
         has_volume=True,
         ig_pip_value=0.01,
-        ig_margin_class="equity_etf",
+        ig_margin_class=AssetClass.EQUITY_ETF,
         sector=sector,
     )
 
@@ -163,8 +181,8 @@ _FX = [
 #     preserved.  pip was the GLD/SLV→IG cross scale (gold 0.092237, silver
 #     0.009119) while metals were EODHD-sourced (retired 2026-06-19). ---
 _METALS = [
-    _metal("XAU/USD", "GLD", "CS.D.USCGC.TODAY.IP", 1.0, "spot_gold"),
-    _metal("XAG/USD", "SLV", "CS.D.USCSI.TODAY.IP", 1.0, "commodity"),
+    _metal("XAU/USD", "GLD", "CS.D.USCGC.TODAY.IP", 1.0, AssetClass.SPOT_GOLD),
+    _metal("XAG/USD", "SLV", "CS.D.USCSI.TODAY.IP", 1.0, AssetClass.COMMODITY),
 ]
 
 # --- US equities (14) — us WS, volume group; lower-priced sleeve (min-risk

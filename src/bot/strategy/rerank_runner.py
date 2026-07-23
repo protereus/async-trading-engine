@@ -35,7 +35,7 @@ from typing import TYPE_CHECKING, Any, TypedDict
 import numpy as np
 
 from bot.core.event_bus import EVENT_NEW_CANDLE, EVENT_ORDER_FILLED
-from bot.core.models import Candle, ExchangeError, IGOrderRequest, MarketClosedError
+from bot.core.models import Candle, ExchangeError, IGOrderRequest, MarketClosedError, Position
 from bot.data.candle_db import SignalHistoryRow
 from bot.execution.ig_convert import IG_MIN_STOP_PCT, apply_sentiment_gate
 from bot.execution.ig_quote_scale import (
@@ -53,6 +53,7 @@ from bot.trading_hours import is_market_open, is_safe_for_entry
 if TYPE_CHECKING:
     from bot.core.bot_context import BotContext
     from bot.sentiment.models import ConsensusSignal
+    from bot.strategy.topk_strategy import AssetSignal
 
 logger = logging.getLogger(__name__)
 
@@ -258,21 +259,21 @@ class RerankRunner:
         IG's rate limit.  The ``reconcile`` phase is set by the run-init update."""
         await self._ctx.closer.reconcile_positions_with_ig()
 
-    async def _rerank_inference(self, watchlist: list[str]) -> list[Any]:
+    async def _rerank_inference(self, watchlist: list[str]) -> list[AssetSignal]:
         """Pass-1/Pass-2 Kronos inference for the watchlist; returns the per-asset
         signals and stashes them on ``ctx.topk_signals``."""
         ctx = self._ctx
 
-        async def _fetch(epic: str) -> list[Any]:
+        async def _fetch(epic: str) -> list[Candle]:
             return ctx.store.get_candles(epic)
 
         _kronos_progress.reset_counter()
         ctx.rerank_status.update(phase="inference", phase_started_at=time.time())
-        signals: list[Any] = await ctx.topk_strategy.scan(watchlist, _fetch)
+        signals: list[AssetSignal] = await ctx.topk_strategy.scan(watchlist, _fetch)
         ctx.topk_signals = signals
         return signals
 
-    def _rerank_select(self, signals: list[Any]) -> list[str]:
+    def _rerank_select(self, signals: list[AssetSignal]) -> list[str]:
         """Exclude monitor-only symbols then pick the open-market top-K."""
         ctx = self._ctx
         # Exclude monitor-only symbols (e.g. metals) from selection while
@@ -568,7 +569,7 @@ class RerankRunner:
         ctx.event_bus.subscribe(EVENT_NEW_CANDLE, _on_new_candle)
         await ctx.shutdown_event.wait()
 
-    async def process_candle(self, candle: Any) -> None:
+    async def process_candle(self, candle: Candle) -> None:
         """Run per-candle logic (stop-loss + take-profit checks for IG TopK)."""
         ctx = self._ctx
         if not isinstance(candle, Candle):
@@ -605,7 +606,7 @@ class RerankRunner:
         self,
         symbol: str,
         current_price: float,
-        current_position: Any,
+        current_position: Position,
     ) -> None:
         """Exit logic for an open position: stop-loss check (priority 1) then
         take-profit evaluation (priorities 2–6)."""
