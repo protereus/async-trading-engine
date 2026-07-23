@@ -427,7 +427,7 @@ class RerankRunner:
                 in_topk = sym in ctx.topk_selected or not is_market_open(sym)
                 decision = ctx.tp_manager.evaluate_signal(sym, latest_signal, in_topk)
                 if decision.should_exit:
-                    await ctx.closer.close_position(sym, decision.reason.value, decision.reasoning)
+                    await ctx.closer.request_close(sym, decision.reason.value, decision.reasoning)
                     continue
                 # Sentiment reversal check — uses latest scan's cached scores
                 if ctx.config.tp_sentiment_reversal_enabled:
@@ -435,7 +435,7 @@ class RerankRunner:
                     if sentiment is not None:
                         sent_decision = ctx.tp_manager.evaluate_sentiment(sym, sentiment)
                         if sent_decision.should_exit:
-                            await ctx.closer.close_position(
+                            await ctx.closer.request_close(
                                 sym,
                                 sent_decision.reason.value,
                                 sent_decision.reasoning,
@@ -627,21 +627,17 @@ class RerankRunner:
                 loss_pct * 100,
                 stop_pct * 100,
             )
-            closed = await ctx.closer.close_ig_position(epic, current_price, current_position)
+            closed = await ctx.closer.close_ig_position(epic, current_position)
             if closed is None:
                 # Deferred — IG funding/maintenance window. Skip reconcile +
                 # alert; next candle will retry once the window ends.
                 pass
             elif closed is False:
-                # Probe IG immediately to disambiguate flaky endpoint vs.
-                # ghost dealId. Reconciler fires its own alert if the
-                # position is already gone on IG.
-                await ctx.closer.reconcile_positions_with_ig()
-                if epic in ctx.state.positions:
-                    await ctx.alerter.send_error(
-                        f"Stop-loss close failed for {epic} — position still open on IG, "
-                        f"will retry on next candle"
-                    )
+                await ctx.closer.handle_close_failure(
+                    epic,
+                    f"Stop-loss close failed for {epic} — position still open on IG, "
+                    f"will retry on next candle",
+                )
             else:
                 # Success — ``closed`` is the realised IG-level fill price.
                 if ctx.tp_manager is not None:
@@ -653,7 +649,7 @@ class RerankRunner:
             now_ms = int(time.time() * 1000)
             tp_decision = ctx.tp_manager.evaluate_price(epic, ig_current, now_ms)
             if tp_decision.should_exit:
-                await ctx.closer.close_position(
+                await ctx.closer.request_close(
                     epic, tp_decision.reason.value, tp_decision.reasoning
                 )
 

@@ -123,7 +123,7 @@ class EventWiring:
                 worst_symbol,
                 data.ratio,
             )
-            await ctx.closer.close_position(
+            await ctx.closer.request_close(
                 worst_symbol,
                 reason="margin_breaker_defensive",
                 reasoning=f"Margin ratio {data.ratio:.2f} ≤ defensive threshold",
@@ -137,7 +137,7 @@ class EventWiring:
                 data.ratio,
             )
             for symbol in symbols:
-                await ctx.closer.close_position(
+                await ctx.closer.request_close(
                     symbol,
                     reason="margin_breaker_flatten",
                     reasoning=f"Margin ratio {data.ratio:.2f} ≤ emergency threshold",

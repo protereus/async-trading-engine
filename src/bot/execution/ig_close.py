@@ -151,53 +151,10 @@ class IGCloseManager:
             for sym in stale:
                 logger.warning("Purging stale position %s (not found on IG)", sym)
                 pos = ctx.state.positions[sym]
-                # Try to fetch the real IG close fill from /history/transactions
-                # so the alert reports the actual exit level + P&L instead of
-                # an estimate from the local Twelve Data candle.
-                try:
-                    txn = await ctx.ig_client.fetch_closed_transaction(
-                        opened_at_ms=pos.opened_at,
-                    )
-                except Exception:
-                    logger.exception("fetch_closed_transaction failed for %s", sym)
-                    txn = None
-                if not isinstance(txn, dict):
-                    txn = None
-                scale = ig_quote_scale(sym)
-                entry_display = pos.entry_price / scale
-                if txn is not None:
-                    close_level = safe_float(txn.get("closeLevel"))
-                    pnl_raw = parse_ig_pnl(txn.get("profitAndLoss", ""))
-                    if close_level > 0:
-                        ig_close_level = close_level
-                        close_display = close_level / scale
-                        pnl_pct = (ig_close_level - pos.entry_price) / pos.entry_price * 100
-                        reasoning = (
-                            f"IG closed externally @ {close_display:.4f} "
-                            f"(real P&L {pnl_raw:+.2f} GBP) — "
-                            "server-side stop, contract rollover, or manual close"
-                        )
-                    else:
-                        # Transaction matched but no closeLevel — fall back to candle
-                        txn = None
-                if txn is None:
-                    latest = ctx.store.get_latest_candle(sym)
-                    if latest is None:
-                        # No price reference at all — purge silently with a stub alert
-                        close_display = entry_display
-                        pnl_pct = 0.0
-                        reasoning = (
-                            "Position no longer present on IG — no fill record found "
-                            "(transactions API empty or window outside lookback)"
-                        )
-                    else:
-                        close_display = latest.close
-                        ig_current = latest.close * scale
-                        pnl_pct = (ig_current - pos.entry_price) / pos.entry_price * 100
-                        reasoning = (
-                            "Position no longer present on IG — estimated P&L "
-                            "from local candle (real fill unavailable from /history)"
-                        )
+                entry_display = pos.entry_price / ig_quote_scale(sym)
+                close_display, pnl_pct, reasoning = await self._resolve_external_close_summary(
+                    sym, pos
+                )
                 try:
                     await ctx.alerter.alert_take_profit(
                         sym,
@@ -222,7 +179,7 @@ class IGCloseManager:
             logger.exception("IG position reconciliation failed — stop-losses may not close")
 
     async def close_ig_position(
-        self, symbol: str, current_price: float, current_position: Any
+        self, symbol: str, current_position: Any
     ) -> float | bool | None:
         """Close an open IG spread bet position.
 
@@ -281,12 +238,76 @@ class IGCloseManager:
             )
             return False
 
-    async def close_position(self, symbol: str, reason: str, reasoning: str = "") -> None:
+    async def _resolve_external_close_summary(
+        self, sym: str, pos: Any
+    ) -> tuple[float, float, str]:
+        """Resolve (close_display, pnl_pct, reasoning) for a position purged
+        because it's no longer present on IG.
+
+        Prefers the real IG close fill from ``/history/transactions``; falls
+        back to the last local candle, then to a no-price stub when neither
+        is available.
+        """
+        ctx = self._ctx
+        scale = ig_quote_scale(sym)
+        try:
+            txn = await ctx.ig_client.fetch_closed_transaction(opened_at_ms=pos.opened_at)
+        except Exception:
+            logger.exception("fetch_closed_transaction failed for %s", sym)
+            txn = None
+        if not isinstance(txn, dict):
+            txn = None
+        if txn is not None:
+            close_level = safe_float(txn.get("closeLevel"))
+            if close_level > 0:
+                pnl_raw = parse_ig_pnl(txn.get("profitAndLoss", ""))
+                close_display = close_level / scale
+                pnl_pct = (close_level - pos.entry_price) / pos.entry_price * 100
+                reasoning = (
+                    f"IG closed externally @ {close_display:.4f} "
+                    f"(real P&L {pnl_raw:+.2f} GBP) — "
+                    "server-side stop, contract rollover, or manual close"
+                )
+                return close_display, pnl_pct, reasoning
+        latest = ctx.store.get_latest_candle(sym)
+        if latest is None:
+            entry_display = pos.entry_price / scale
+            return (
+                entry_display,
+                0.0,
+                "Position no longer present on IG — no fill record found "
+                "(transactions API empty or window outside lookback)",
+            )
+        close_display = latest.close
+        ig_current = latest.close * scale
+        pnl_pct = (ig_current - pos.entry_price) / pos.entry_price * 100
+        reasoning = (
+            "Position no longer present on IG — estimated P&L "
+            "from local candle (real fill unavailable from /history)"
+        )
+        return close_display, pnl_pct, reasoning
+
+    async def handle_close_failure(self, symbol: str, context_msg: str) -> None:
+        """Shared reconcile-then-maybe-alert branch for a failed (``False``)
+        ``close_ig_position`` result.
+
+        Probes IG immediately: if the dealId is a ghost (position already
+        gone server-side, e.g. contract rollover), the reconciler purges the
+        local entry and fires its own external-close alert. Otherwise the
+        position is still live on IG and *context_msg* is surfaced as an
+        error alert.
+        """
+        ctx = self._ctx
+        await self.reconcile_positions_with_ig()
+        if symbol in ctx.state.positions:
+            await ctx.alerter.send_error(context_msg)
+
+    async def request_close(self, symbol: str, reason: str, reasoning: str = "") -> None:
         """Unified close path for all TP and rerank exits.
 
-        Looks up current position and price, calls the IG REST closer,
-        deregisters from TakeProfitManager, and fires a Telegram alert.
-        Stop-loss closes bypass this (they call close_ig_position directly).
+        Looks up the current position, calls the IG REST closer, deregisters
+        from TakeProfitManager, and fires a Telegram alert. Stop-loss closes
+        bypass this (they call close_ig_position directly).
 
         If IG rejects the close, TP state is preserved so the next candle/rerank
         can retry, and an error alert is sent in place of the take-profit alert.
@@ -295,26 +316,18 @@ class IGCloseManager:
         pos = ctx.state.positions.get(symbol)
         if pos is None:
             return
-        latest = ctx.store.get_latest_candle(symbol)
-        current_price = latest.close if latest else pos.entry_price
         logger.info("Closing %s: reason=%s %s", symbol, reason, reasoning)
-        fill_ig = await self.close_ig_position(symbol, current_price, pos)
+        fill_ig = await self.close_ig_position(symbol, pos)
         if fill_ig is None:
             # Deferred — IG is inside its daily funding/maintenance window.
             # Position is still live on IG; do NOT reconcile (would mis-purge)
             # and do NOT alert.  Next candle/rerank will retry.
             return
         if fill_ig is False:
-            # Probe IG immediately: if the dealId is a ghost (position already
-            # gone server-side, e.g. contract rollover), the reconciler purges
-            # the local entry and fires its own external-close alert. Otherwise
-            # the position is still live on IG and we surface the close error.
-            await self.reconcile_positions_with_ig()
-            if symbol not in ctx.state.positions:
-                return
-            await ctx.alerter.send_error(
+            await self.handle_close_failure(
+                symbol,
                 f"Close failed for {symbol} ({reason}) — position still open on IG, "
-                f"TP tracking preserved for retry"
+                f"TP tracking preserved for retry",
             )
             return
         if ctx.tp_manager is not None:

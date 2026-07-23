@@ -1443,7 +1443,7 @@ class TestClosePosition:
             )
         )
 
-        await bot.ctx.closer.close_position("XAU/USD", "static_take_profit", "test")
+        await bot.ctx.closer.request_close("XAU/USD", "static_take_profit", "test")
 
         bot.ctx.ig_client.close_position.assert_awaited_once()
         kwargs_pnl = cast(AsyncMock, bot.ctx.alerter).alert_take_profit.call_args
@@ -1470,7 +1470,7 @@ class TestClosePosition:
             )
         )
 
-        await bot.ctx.closer.close_position("USD/JPY", "trailing_ratchet", "test")
+        await bot.ctx.closer.request_close("USD/JPY", "trailing_ratchet", "test")
 
         kwargs_pnl = cast(AsyncMock, bot.ctx.alerter).alert_take_profit.call_args
         entry_display = kwargs_pnl.args[2]
@@ -1484,7 +1484,7 @@ class TestClosePosition:
     @pytest.mark.asyncio
     async def test_close_no_position_is_noop(self, bot: TradingBot) -> None:
         """No position for symbol → close_position returns silently."""
-        await bot.ctx.closer.close_position("EUR/USD", "static_take_profit", "")
+        await bot.ctx.closer.request_close("EUR/USD", "static_take_profit", "")
         bot.ctx.ig_client.close_position.assert_not_called()
         cast(AsyncMock, bot.ctx.alerter).alert_take_profit.assert_not_called()
 
@@ -1506,7 +1506,7 @@ class TestClosePosition:
         )
 
         assert "EUR/USD" in bot.ctx.tp_manager._positions
-        await bot.ctx.closer.close_position("EUR/USD", "static_take_profit", "")
+        await bot.ctx.closer.request_close("EUR/USD", "static_take_profit", "")
         assert "EUR/USD" not in bot.ctx.tp_manager._positions
 
     @pytest.mark.asyncio
@@ -1537,7 +1537,7 @@ class TestClosePosition:
             ]
         )
 
-        await bot.ctx.closer.close_position("EUR/USD", "static_take_profit", "")
+        await bot.ctx.closer.request_close("EUR/USD", "static_take_profit", "")
 
         # close_position attempted but IG rejected — preserve everything for retry
         assert "EUR/USD" in bot.ctx.tp_manager._positions
@@ -1567,7 +1567,7 @@ class TestClosePosition:
         # /positions returns empty → reconciler treats the position as gone.
         bot.ctx.ig_client.fetch_positions_raw = AsyncMock(return_value=[])
 
-        await bot.ctx.closer.close_position("EUR/USD", "static_take_profit", "")
+        await bot.ctx.closer.request_close("EUR/USD", "static_take_profit", "")
 
         assert "EUR/USD" not in bot.ctx.state.positions
         assert "EUR/USD" not in bot.ctx.ig_deal_ids
@@ -1603,7 +1603,7 @@ class TestClosePosition:
         # assertion below would fail loudly.
         bot.ctx.ig_client.fetch_positions_raw = AsyncMock(return_value=[])
 
-        await bot.ctx.closer.close_position("EUR/USD", "static_take_profit", "")
+        await bot.ctx.closer.request_close("EUR/USD", "static_take_profit", "")
 
         # State preserved
         assert "EUR/USD" in bot.ctx.state.positions
@@ -2070,7 +2070,7 @@ class TestMarginBreakerE2E:
         async def fake_close(symbol: str, reason: str, reasoning: str = "") -> None:
             close_calls.append((symbol, reason))
 
-        bot.ctx.closer.close_position = fake_close  # type: ignore[method-assign,assignment]
+        bot.ctx.closer.request_close = fake_close  # type: ignore[method-assign,assignment]
 
         # Pre-prime the breaker into HALT first (eq/margin=0.80) to avoid the
         # "skip first transition" race; then push to DEFENSIVE (0.65).
@@ -2098,7 +2098,7 @@ class TestMarginBreakerE2E:
         async def fake_close(symbol: str, reason: str, reasoning: str = "") -> None:
             close_calls.append(symbol)
 
-        bot.ctx.closer.close_position = fake_close  # type: ignore[method-assign,assignment]
+        bot.ctx.closer.request_close = fake_close  # type: ignore[method-assign,assignment]
 
         # Walk straight through: HALT → EMERGENCY
         bot.ctx.risk_manager.update_margin_state(self._account(equity=10_000, margin=12_500))
@@ -2121,7 +2121,7 @@ class TestMarginBreakerE2E:
         async def fake_close(symbol: str, reason: str, reasoning: str = "") -> None:
             close_calls.append(symbol)
 
-        bot.ctx.closer.close_position = fake_close  # type: ignore[method-assign,assignment]
+        bot.ctx.closer.request_close = fake_close  # type: ignore[method-assign,assignment]
 
         bot.ctx.risk_manager.update_margin_state(self._account(equity=10_000, margin=12_500))
 
@@ -2161,7 +2161,7 @@ class TestMarketClosedReconciliation:
         )
         bot.ctx.closer.reconcile_positions_with_ig = AsyncMock()  # type: ignore[method-assign]
 
-        await bot.ctx.closer.close_position("XAU/USD", reason="test_market_closed")
+        await bot.ctx.closer.request_close("XAU/USD", reason="test_market_closed")
 
         # Position + dealId preserved for the next retry
         assert "XAU/USD" in bot.ctx.state.positions
@@ -2182,7 +2182,7 @@ class TestMarketClosedReconciliation:
         bot.ctx.ig_client.close_position = AsyncMock(side_effect=RuntimeError("network bork"))
         bot.ctx.closer.reconcile_positions_with_ig = AsyncMock()  # type: ignore[method-assign]
 
-        await bot.ctx.closer.close_position("XAU/USD", reason="test_failed_close")
+        await bot.ctx.closer.request_close("XAU/USD", reason="test_failed_close")
 
         bot.ctx.closer.reconcile_positions_with_ig.assert_awaited_once()
 
