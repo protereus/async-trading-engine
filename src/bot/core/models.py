@@ -496,9 +496,7 @@ class BotState:
             peak_equity=data.get("peak_equity", 0.0),
             cash=data.get("cash", 0.0),
             open_pnl=data.get("open_pnl", 0.0),
-            # Legacy "daily_pnl" key supported for one restart cycle so the
-            # rename doesn't lose the live value in bot_state.json.
-            pnl_24h=data.get("pnl_24h", data.get("daily_pnl", 0.0)),
+            pnl_24h=data.get("pnl_24h", 0.0),
             last_candle_timestamps=data.get("last_candle_timestamps", {}),
             bot_started_at=data.get("bot_started_at", 0),
             last_heartbeat=data.get("last_heartbeat", 0),

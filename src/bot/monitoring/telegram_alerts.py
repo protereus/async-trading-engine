@@ -215,9 +215,7 @@ class TelegramAlerter:
             elif equity is not None:
                 status_parts.append(f"Eq: \xa3{equity:,.0f}")
             if risk_summary is not None:
-                # Legacy key "daily_pnl" supported until any mocked test snapshots
-                # are refreshed; the live RiskManager only emits "pnl_24h" now.
-                pnl_24h = risk_summary.get("pnl_24h", risk_summary.get("daily_pnl", 0.0))
+                pnl_24h = risk_summary.get("pnl_24h", 0.0)
                 dd = risk_summary.get("current_drawdown_pct", 0.0) * 100
                 tier = risk_summary.get("drawdown_tier", "NORMAL")
                 sign = "+" if pnl_24h >= 0 else ""

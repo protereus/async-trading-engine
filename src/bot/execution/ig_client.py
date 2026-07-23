@@ -696,6 +696,3 @@ class IGClient:
         that drive ``client._post`` directly still exercise the retry path."""
         return await self._http.post(path, body, version=version, authenticated=authenticated)
 
-    async def _delete(self, path: str, version: str, authenticated: bool) -> dict[str, Any]:
-        """Back-compat alias for ``self._http.delete``."""
-        return await self._http.delete(path, version=version, authenticated=authenticated)

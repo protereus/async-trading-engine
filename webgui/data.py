@@ -544,7 +544,6 @@ class DashboardData:
             # D3-native symbols, ETF/face value otherwise) → × scale to IG level.
             current_display: float | None = None
             ig_current: float | None = None
-            current_td: float | None = None
             unreal_pnl_pct: float | None = None
             state_current_ig = float(pos.get("current_price", 0.0))
             if state_current_ig > 0:
@@ -554,8 +553,6 @@ class DashboardData:
                 if latest is not None:
                     ig_current = latest[1] * _ig_quote_scale(sym)
             if ig_current is not None:
-                scale = _ig_quote_scale(sym)
-                current_td = ig_current / scale if scale else None
                 current_display = _ig_display_price(sym, ig_current)
                 if entry_ig > 0:
                     unreal_pnl_pct = (ig_current - entry_ig) / entry_ig * 100
@@ -585,10 +582,6 @@ class DashboardData:
                     "symbol": sym,
                     "entry_price": entry_ig,
                     "entry_display": _ig_display_price(sym, entry_ig),
-                    # ``current_price_td`` kept for back-compat with any
-                    # external poller; ``current_display`` is the unit the
-                    # template renders.
-                    "current_price_td": current_td,
                     "current_display": current_display,
                     "quantity": qty,
                     "opened_at": opened_at,
@@ -624,9 +617,7 @@ class DashboardData:
             "open_pnl": open_pnl,
             "peak_equity": peak,
             "drawdown_pct": drawdown_pct,
-            # Legacy "daily_pnl" key in older bot_state.json snapshots is read
-            # as a fallback for one restart cycle.
-            "pnl_24h": float(state.get("pnl_24h", state.get("daily_pnl", 0.0))),
+            "pnl_24h": float(state.get("pnl_24h", 0.0)),
             "trading_halted": bool(risk.get("trading_halted", False)),
             "consecutive_losses": int(risk.get("consecutive_losses", 0)),
             "last_heartbeat_ms": last_heartbeat,

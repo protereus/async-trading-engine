@@ -166,8 +166,6 @@ class TestPositionDisplay:
         assert xau["entry_display"] == pytest.approx(8726.2)
         # Current: live state IG level 8855.0 / 1.0 = 8855.0
         assert xau["current_display"] == pytest.approx(8855.0)
-        # Raw current_price_td kept for back-compat
-        assert xau["current_price_td"] == pytest.approx(8855.0)
 
     def test_current_price_prefers_live_state_over_stale_candle(
         self, fake_environment: tuple[Path, Path]
@@ -185,7 +183,6 @@ class TestPositionDisplay:
         snap = DashboardData(db_path=db_path, state_path=state_path).snapshot()
         xau = next(p for p in snap["positions"] if p["symbol"] == "XAU/USD")
         assert xau["current_display"] == pytest.approx(8900.0)  # from state, not 8855.0
-        assert xau["current_price_td"] == pytest.approx(8900.0)
         # P&L% derives from the live level: (8900 - 8726.2) / 8726.2.
         assert xau["unrealised_pnl_pct"] == pytest.approx((8900.0 - 8726.2) / 8726.2 * 100)
 

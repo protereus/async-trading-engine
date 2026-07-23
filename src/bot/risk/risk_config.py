@@ -15,7 +15,6 @@ class RiskConfig(BaseModel):
     max_position_pct: float = 0.05  # 5% of portfolio in any single position
     atr_period: int = 14
     atr_multiplier: float = 2.0  # stop distance = ATR x this
-    min_order_size_usd: float = 10.0  # generic-path minimum (legacy OKX value)
 
     # ------------------------------------------------------------------
     # Exposure limits
@@ -29,8 +28,7 @@ class RiskConfig(BaseModel):
     # Sum of risk-on (stop-loss) budgets across all open IG positions, as a
     # fraction of equity.  With risk_per_trade_pct=0.01, a cap of 0.05 allows
     # up to ~5 concurrent full-size positions — and headroom expands as
-    # trailing stops ratchet (live risk shrinks).  The generic (non-IG) path
-    # still treats this as a notional-exposure cap (legacy semantics).
+    # trailing stops ratchet (live risk shrinks).
     max_total_risk_pct: float = 0.05
     # Per-sector risk-on cap: max fraction of equity that can be at risk
     # (sum of stop-loss budgets) inside any single sector.  Half of

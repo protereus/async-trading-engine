@@ -148,10 +148,6 @@ class RiskManager:
         return self._margin_breaker.ratio
 
     @property
-    def margin_circuit_state(self) -> MarginCircuitState:
-        return self._margin_breaker.state
-
-    @property
     def equity(self) -> float:
         """Current account equity tracked by the drawdown breaker."""
         return self._drawdown.equity
