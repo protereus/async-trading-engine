@@ -526,10 +526,7 @@ class RerankRunner:
         # Dedup-on-change: only surface the correlation section when the
         # set of dropped picks differs from the previous rerank, so a
         # steady-state bump isn't repeated on every alert.
-        _material = ctx.topk_strategy._last_material_bumped
-        _bump_key = frozenset((s, b) for s, b, _ in _material)
-        _bump_changed = _bump_key != ctx.topk_strategy._last_alerted_bump_key
-        ctx.topk_strategy._last_alerted_bump_key = _bump_key
+        _bumped = ctx.topk_strategy.material_bumps_if_changed()
         await ctx.alerter.send_topk_rerank(
             signals,
             new_selected,
@@ -540,7 +537,7 @@ class RerankRunner:
             equity=_equity_now,
             cash=_cash_now,
             open_pnl=_open_pnl_now,
-            bumped=(_material if (_material and _bump_changed) else None),
+            bumped=_bumped,
             open_market=is_safe_for_entry,
         )
 

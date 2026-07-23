@@ -445,6 +445,19 @@ class TopKStrategy:
         """Latest extracted path signal for *symbol* (``None`` if none)."""
         return self._path_signals.get(symbol)
 
+    def material_bumps_if_changed(self) -> list[tuple[str, str, float]] | None:
+        """Current material-bump list if it differs from the last-alerted
+        set, else ``None``.
+
+        Updates ``_last_alerted_bump_key`` as a side effect, so a
+        steady-state bump (e.g. GBP/USD <-> EUR/USD every rerank) is
+        returned once and doesn't re-surface until it changes.
+        """
+        bump_key = frozenset((s, b) for s, b, _ in self._last_material_bumped)
+        changed = bump_key != self._last_alerted_bump_key
+        self._last_alerted_bump_key = bump_key
+        return self._last_material_bumped if (self._last_material_bumped and changed) else None
+
     def snapshot_correlation(self) -> dict[str, dict[str, float]]:
         """Serialisable snapshot of the rolling correlation matrix."""
         return self._correlation_tracker.snapshot()
