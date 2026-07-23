@@ -588,7 +588,7 @@ class RerankRunner:
 
     async def process_candle_ig_topk(
         self,
-        epic: str,
+        symbol: str,
         current_price: float,
         current_position: Any,
     ) -> None:
@@ -596,17 +596,17 @@ class RerankRunner:
 
         Exits: stop-loss breach on every candle; rerank-driven exits handled
         by ``topk_rerank_loop``.
-        Entries: fired on the first candle after the epic enters the top-K
-        selection (i.e. after ``_topk_scanned`` is True and epic is selected).
+        Entries: fired on the first candle after the symbol enters the top-K
+        selection (i.e. after ``_topk_scanned`` is True and symbol is selected).
         """
         if current_position is not None:
-            await self._handle_open_position(epic, current_price, current_position)
+            await self._handle_open_position(symbol, current_price, current_position)
             return
-        await self._maybe_enter(epic, current_price)
+        await self._maybe_enter(symbol, current_price)
 
     async def _handle_open_position(
         self,
-        epic: str,
+        symbol: str,
         current_price: float,
         current_position: Any,
     ) -> None:
@@ -614,59 +614,59 @@ class RerankRunner:
         take-profit evaluation (priorities 2–6)."""
         ctx = self._ctx
         # Stop-loss check (priority 1): use vol-adjusted stop from the last scan signal
-        topk_signal = next((s for s in ctx.topk_signals if s.symbol == epic), None)
+        topk_signal = next((s for s in ctx.topk_signals if s.symbol == symbol), None)
         stop_pct = topk_signal.stop_pct if topk_signal is not None else ctx.config.topk_min_stop_pct
         # Convert Twelve Data price to IG level for comparison with entry_price.
         # IG quotes JPY pairs at 100× the FX rate (e.g. USD/JPY 157.05 → level 15705).
-        ig_current = current_price * ig_quote_scale(epic)
+        ig_current = current_price * ig_quote_scale(symbol)
         loss_pct = (current_position.entry_price - ig_current) / current_position.entry_price
         if loss_pct >= stop_pct:
             logger.info(
                 "TopK stop-loss: %s loss=%.2f%% >= stop=%.2f%%",
-                epic,
+                symbol,
                 loss_pct * 100,
                 stop_pct * 100,
             )
-            closed = await ctx.closer.close_ig_position(epic, current_position)
+            closed = await ctx.closer.close_ig_position(symbol, current_position)
             if closed is None:
                 # Deferred — IG funding/maintenance window. Skip reconcile +
                 # alert; next candle will retry once the window ends.
                 pass
             elif closed is False:
                 await ctx.closer.handle_close_failure(
-                    epic,
-                    f"Stop-loss close failed for {epic} — position still open on IG, "
+                    symbol,
+                    f"Stop-loss close failed for {symbol} — position still open on IG, "
                     f"will retry on next candle",
                 )
             else:
                 # Success — ``closed`` is the realised IG-level fill price.
                 if ctx.tp_manager is not None:
-                    ctx.tp_manager.deregister_position(epic)
+                    ctx.tp_manager.deregister_position(symbol)
             return
 
         # Take-profit evaluation (priorities 2–6, via evaluate_price)
         if ctx.tp_manager is not None:
             now_ms = int(time.time() * 1000)
-            tp_decision = ctx.tp_manager.evaluate_price(epic, ig_current, now_ms)
+            tp_decision = ctx.tp_manager.evaluate_price(symbol, ig_current, now_ms)
             if tp_decision.should_exit:
                 await ctx.closer.request_close(
-                    epic, tp_decision.reason.value, tp_decision.reasoning
+                    symbol, tp_decision.reason.value, tp_decision.reasoning
                 )
 
-    async def _maybe_enter(self, epic: str, current_price: float) -> None:
+    async def _maybe_enter(self, symbol: str, current_price: float) -> None:
         """Entry path: selection/scan/hours gate, then the entry lock + re-check
         + ``_attempt_topk_entry``."""
         ctx = self._ctx
-        # Entry: scan has run and this epic is currently selected
-        if not ctx.topk_scanned or epic not in ctx.topk_selected:
+        # Entry: scan has run and this symbol is currently selected
+        if not ctx.topk_scanned or symbol not in ctx.topk_selected:
             return
 
         # Trading hours guard — skip entry if the market is currently closed
         # or inside the daily funding/maintenance buffer (22:00 UTC funding tick
         # for forex; 22:00–23:00 UTC maintenance for metals, widened ±5 min).
 
-        if not is_safe_for_entry(epic):
-            logger.debug("TopK entry skipped: %s market closed or in funding window", epic)
+        if not is_safe_for_entry(symbol):
+            logger.debug("TopK entry skipped: %s market closed or in funding window", symbol)
             return
 
         # Serialise entries: the risk gate (max_open_positions / max_total_risk /
@@ -677,18 +677,18 @@ class RerankRunner:
         # serialisation costs nothing.
         async with ctx.entry_lock:
             # Re-check under the lock: a peer entry that filled while we waited
-            # for the lock may have opened this epic (double-entry guard) or
+            # for the lock may have opened this symbol (double-entry guard) or
             # filled the last slot (evaluate_ig_order re-reads fresh state in the
             # helper, so the cap is enforced even then).
-            if ctx.state.positions.get(epic) is not None:
-                logger.debug("TopK entry skipped: %s already open (raced a peer entry)", epic)
+            if ctx.state.positions.get(symbol) is not None:
+                logger.debug("TopK entry skipped: %s already open (raced a peer entry)", symbol)
                 return
-            if epic not in ctx.topk_selected:
+            if symbol not in ctx.topk_selected:
                 return
-            await self._attempt_topk_entry(epic, current_price)
+            await self._attempt_topk_entry(symbol, current_price)
 
     async def _place_with_size_retry(
-        self, epic: str, order: IGOrderRequest, min_deal_size: float | None
+        self, symbol: str, order: IGOrderRequest, min_deal_size: float | None
     ) -> tuple[Any, float]:
         """``place_order`` + ``confirm_order``; on SIZE_INCREMENT snap the stake
         up one 0.1 £/pt grid point and retry once (bump < 0.1 £/pt so the already-
@@ -713,7 +713,7 @@ class RerankRunner:
             logger.warning(
                 "TopK IG entry SIZE_INCREMENT for %s at size=%.2f £/pt — "
                 "retrying once at snapped size=%.2f £/pt",
-                epic,
+                symbol,
                 order.size,
                 snapped,
             )
@@ -727,8 +727,8 @@ class RerankRunner:
             confirmed = await ctx.ig_client.confirm_order(pending.order_id)
             return confirmed, snapped
 
-    async def _attempt_topk_entry(self, epic: str, current_price: float) -> None:
-        """Place a single TopK entry for *epic*.
+    async def _attempt_topk_entry(self, symbol: str, current_price: float) -> None:
+        """Place a single TopK entry for *symbol*.
 
         The caller holds ``ctx.entry_lock`` and has re-checked selection +
         position state under it, so the risk gate below and the position
@@ -738,44 +738,44 @@ class RerankRunner:
         ctx = self._ctx
         logger.info(
             "TopK entry check: %s scanned=%s selected=%s",
-            epic,
+            symbol,
             ctx.topk_scanned,
             ctx.topk_selected,
         )
 
-        equity_gbp, margin_used = await self._sync_balance_state(epic)
+        equity_gbp, margin_used = await self._sync_balance_state(symbol)
         if equity_gbp is None or margin_used is None:
             return
 
-        topk_signal = next((s for s in ctx.topk_signals if s.symbol == epic), None)
+        topk_signal = next((s for s in ctx.topk_signals if s.symbol == symbol), None)
         stop_pct = topk_signal.stop_pct if topk_signal is not None else ctx.config.topk_min_stop_pct
         if stop_pct <= 0:
-            logger.info("TopK stop_pct=0 for %s — skipping", epic)
+            logger.info("TopK stop_pct=0 for %s — skipping", symbol)
             return
 
         # Translate candle symbol → IG EPIC for stop enforcement and order placement
-        ig_epic = ctx.epic_for(epic)
+        ig_epic = ctx.epic_for(symbol)
 
         # Sizing and risk checks
-        order = self._prepare_entry_order(epic, ig_epic, current_price, equity_gbp, stop_pct)
+        order = self._prepare_entry_order(symbol, ig_epic, current_price, equity_gbp, stop_pct)
         if order is None:
             return
 
         # Pre-trade margin gate
         order, final_size = self._check_margin_gate(
-            epic, ig_epic, current_price, equity_gbp, margin_used, order
+            symbol, ig_epic, current_price, equity_gbp, margin_used, order
         )
         if order is None or final_size is None:
             return
 
         # Spread anomaly check
-        if not self._check_spread_anomaly(epic):
+        if not self._check_spread_anomaly(symbol):
             return
 
         # Execute trade
-        await self._execute_entry_order(epic, ig_epic, order, final_size, topk_signal)
+        await self._execute_entry_order(symbol, ig_epic, order, final_size, topk_signal)
 
-    async def _sync_balance_state(self, epic: str) -> tuple[float | None, float | None]:
+    async def _sync_balance_state(self, symbol: str) -> tuple[float | None, float | None]:
         ctx = self._ctx
         try:
             balance = await ctx.ig_client.fetch_balance()
@@ -785,23 +785,23 @@ class RerankRunner:
             logger.warning("Could not fetch IG balance", exc_info=True)
             return None, None
 
-        logger.info("TopK balance: %s equity=%.2f margin=%.2f", epic, equity_gbp, margin_used)
+        logger.info("TopK balance: %s equity=%.2f margin=%.2f", symbol, equity_gbp, margin_used)
         ctx.risk_manager.update_equity(equity_gbp)
         ctx.state.cash = balance["balance"]
         ctx.state.open_pnl = balance["open_pnl"]
         return equity_gbp, margin_used
 
     def _prepare_entry_order(
-        self, epic: str, ig_epic: str, current_price: float, equity_gbp: float, stop_pct: float
+        self, symbol: str, ig_epic: str, current_price: float, equity_gbp: float, stop_pct: float
     ) -> IGOrderRequest | None:
         ctx = self._ctx
         effective_stop_pct = max(stop_pct, IG_MIN_STOP_PCT.get(ig_epic, 0.0))
 
-        pip_value = ig_pip_value(epic)
+        pip_value = ig_pip_value(symbol)
         # Bake worst-case fill slippage into the size denominator so a
         # real stop hit doesn't blow past the £-risked budget.  Per-asset-class
         # estimate from bot.risk.ig_margin (1 bp forex major → 10 bp commodity).
-        slip_pts = ig_slippage_pts(epic, current_price, pip_value)
+        slip_pts = ig_slippage_pts(symbol, current_price, pip_value)
         # Clamp the sizing-equity at the FSCS line so incremental
         # profits past £120K don't grow per-trade £ risk.  Loss-limit and
         # margin gates in evaluate_ig_order still see real equity below.
@@ -818,7 +818,7 @@ class RerankRunner:
         if size <= 0:
             logger.info(
                 "TopK size=0 for %s equity=%.2f price=%.4f stop=%.4f — skipping",
-                epic,
+                symbol,
                 equity_gbp,
                 current_price,
                 effective_stop_pct,
@@ -830,7 +830,7 @@ class RerankRunner:
 
     def _check_margin_gate(
         self,
-        epic: str,
+        symbol: str,
         ig_epic: str,
         current_price: float,
         equity_gbp: float,
@@ -844,15 +844,15 @@ class RerankRunner:
         # IG-level units (post-scale price) and is intentionally conservative;
         # the risk manager projects post-fill ``equity / margin`` against the
         # halt ratio and refuses if it would immediately trip the breaker.
-        ig_level = current_price * ig_quote_scale(epic)
+        ig_level = current_price * ig_quote_scale(symbol)
         estimated_margin = ig_margin_estimate(
-            symbol=epic, size_per_pt=proposed.size, ig_level=ig_level
+            symbol=symbol, size_per_pt=proposed.size, ig_level=ig_level
         )
         decision = ctx.risk_manager.evaluate_ig_order(
             proposed, margin_used, equity_gbp, estimated_margin_gbp=estimated_margin
         )
         if not decision.approved:
-            logger.info("TopK IG order rejected: %s — %s", epic, decision.reason)
+            logger.info("TopK IG order rejected: %s — %s", symbol, decision.reason)
             return None, None
 
         final_size = decision.adjusted_quantity
@@ -862,24 +862,24 @@ class RerankRunner:
         # Log expected overnight funding for this position so the
         # operator can see Wed FX ×3 / Fri equity ×3 multipliers concretely
         # rather than the old "you opened after 18:00 UTC" hour warning.
-        log_overnight_funding_estimate(epic, final_size, ig_level)
+        log_overnight_funding_estimate(symbol, final_size, ig_level)
         return order, final_size
 
-    def _check_spread_anomaly(self, epic: str) -> bool:
+    def _check_spread_anomaly(self, symbol: str) -> bool:
         ctx = self._ctx
         # Refuse new entries when the live bid-ask spread is anomalously
         # wide (> mean + 2σ of the 30-day rolling window).  Quiet no-op until
         # the window has enough history primed in.  ctx.spread_monitor is
         # always set by Lifecycle.init_ig() regardless of candle_exchange.
-        if ctx.spread_monitor is not None and ctx.spread_monitor.is_anomalous(epic):
-            current = ctx.spread_monitor.latest_spread(epic)
-            stats = ctx.spread_monitor.stats(epic)
+        if ctx.spread_monitor is not None and ctx.spread_monitor.is_anomalous(symbol):
+            current = ctx.spread_monitor.latest_spread(symbol)
+            stats = ctx.spread_monitor.stats(symbol)
             if stats is not None:
                 mean, stdev = stats
                 logger.warning(
                     "TopK IG entry blocked by spread monitor: %s current=%.2fpt vs "
                     "mean=%.2f ±%.2f (%.1fσ above mean)",
-                    epic,
+                    symbol,
                     current or 0.0,
                     mean,
                     stdev,
@@ -890,7 +890,7 @@ class RerankRunner:
 
     async def _execute_entry_order(
         self,
-        epic: str,
+        symbol: str,
         ig_epic: str,
         order: IGOrderRequest,
         final_size: float,
@@ -917,14 +917,14 @@ class RerankRunner:
                 logger.info(
                     "TopK IG entry skipped: %s size %.3f £/pt < IG min deal size %.3f "
                     "(stop too wide for the 1%% risk budget at this price)",
-                    epic,
+                    symbol,
                     final_size,
                     min_deal_size,
                 )
                 return
 
-            confirmed, final_size = await self._place_with_size_retry(epic, order, min_deal_size)
-            ctx.ig_deal_ids[epic] = confirmed.order_id
+            confirmed, final_size = await self._place_with_size_retry(symbol, order, min_deal_size)
+            ctx.ig_deal_ids[symbol] = confirmed.order_id
 
             # Record the risk-on budget (£ lost if stop hits) so the
             # total-risk gate can sum it across open positions at the next
@@ -937,7 +937,7 @@ class RerankRunner:
 
             logger.info(
                 "TopK IG BUY: %s (epic=%s) size=%.2f £/pt @ %.4f  dealId=%s",
-                epic,
+                symbol,
                 ig_epic,
                 final_size,
                 fill_price,
@@ -945,13 +945,13 @@ class RerankRunner:
             )
 
             if ctx.tp_manager is not None and topk_signal is not None:
-                _path_sig = ctx.topk_strategy.path_signal_for(epic)
+                _path_sig = ctx.topk_strategy.path_signal_for(symbol)
                 ctx.tp_manager.register_position(
-                    epic,
+                    symbol,
                     fill_price,
                     topk_signal,
                     int(time.time() * 1000),
                     path_signal=_path_sig,
                 )
         except Exception:
-            logger.exception("TopK IG entry failed for %s (epic=%s)", epic, ig_epic)
+            logger.exception("TopK IG entry failed for %s (epic=%s)", symbol, ig_epic)
