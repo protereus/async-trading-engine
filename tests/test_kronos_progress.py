@@ -9,8 +9,8 @@ from collections.abc import Iterator
 import pytest
 import tqdm
 
-from bot.strategy import _kronos_progress
-from bot.strategy._kronos_progress import _LoggingTrange, install, uninstall
+from bot.strategy import kronos_progress
+from bot.strategy.kronos_progress import _LoggingTrange, install, uninstall
 
 # Mirrors webgui/diagnostics._TQDM_RE — the contract the wrapper must preserve
 # so the dashboard's rerank progress bar keeps parsing.
@@ -50,11 +50,11 @@ def _restore_tqdm() -> Iterator[None]:
 @pytest.fixture(autouse=True)
 def _reset_progress_state() -> Iterator[None]:
     """Reset the module-global batch counter + callback between tests."""
-    _kronos_progress.reset_counter()
-    _kronos_progress.set_progress_callback(None)
+    kronos_progress.reset_counter()
+    kronos_progress.set_progress_callback(None)
     yield
-    _kronos_progress.reset_counter()
-    _kronos_progress.set_progress_callback(None)
+    kronos_progress.reset_counter()
+    kronos_progress.set_progress_callback(None)
 
 
 class TestLoggingTrange:
@@ -175,7 +175,7 @@ class TestInstall:
         original = tqdm.trange
         install()
         assert tqdm.trange is original
-        assert _kronos_progress._original_trange is None
+        assert kronos_progress._original_trange is None
 
 
 class TestBatchCounter:
@@ -184,36 +184,36 @@ class TestBatchCounter:
     bug)."""
 
     def test_reset_and_bump(self) -> None:
-        _kronos_progress.reset_counter()
-        assert _kronos_progress._batch_counter == 0
-        _kronos_progress.bump_batch()
-        _kronos_progress.bump_batch()
-        assert _kronos_progress._batch_counter == 2
+        kronos_progress.reset_counter()
+        assert kronos_progress._batch_counter == 0
+        kronos_progress.bump_batch()
+        kronos_progress.bump_batch()
+        assert kronos_progress._batch_counter == 2
 
     def test_bump_fires_callback_with_none_snapshot(self) -> None:
         calls: list[tuple[int, dict | None]] = []
-        _kronos_progress.set_progress_callback(lambda idx, snap: calls.append((idx, snap)))
-        _kronos_progress.bump_batch()
-        _kronos_progress.bump_batch()
+        kronos_progress.set_progress_callback(lambda idx, snap: calls.append((idx, snap)))
+        kronos_progress.bump_batch()
+        kronos_progress.bump_batch()
         assert calls == [(1, None), (2, None)]
 
     def test_bump_without_callback_is_safe(self) -> None:
-        _kronos_progress.set_progress_callback(None)
-        _kronos_progress.bump_batch()
-        assert _kronos_progress._batch_counter == 1
+        kronos_progress.set_progress_callback(None)
+        kronos_progress.bump_batch()
+        assert kronos_progress._batch_counter == 1
 
     def test_trange_and_bump_share_one_counter(self) -> None:
         """Pass-1 (trange) + Pass-2 (bump) increment the same counter, so a full
         group advances it smoothly: 1 (Pass-1) then +1 per Pass-2 call."""
         list(_LoggingTrange(3, mininterval=0.0))  # Pass-1 call → 1
-        _kronos_progress.bump_batch()  # Pass-2 call → 2
-        _kronos_progress.bump_batch()  # Pass-2 call → 3
-        assert _kronos_progress._batch_counter == 3
+        kronos_progress.bump_batch()  # Pass-2 call → 2
+        kronos_progress.bump_batch()  # Pass-2 call → 3
+        assert kronos_progress._batch_counter == 3
 
     def test_bump_callback_failure_is_swallowed(self) -> None:
         def _boom(idx: int, snap: dict | None) -> None:
             raise RuntimeError("consumer bug")
 
-        _kronos_progress.set_progress_callback(_boom)
-        _kronos_progress.bump_batch()  # must not raise
-        assert _kronos_progress._batch_counter == 1
+        kronos_progress.set_progress_callback(_boom)
+        kronos_progress.bump_batch()  # must not raise
+        assert kronos_progress._batch_counter == 1

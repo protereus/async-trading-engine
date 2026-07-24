@@ -47,7 +47,7 @@ from bot.risk.funding import log_overnight_funding_estimate
 from bot.risk.ig_margin import estimate_margin_gbp as ig_margin_estimate
 from bot.risk.ig_margin import estimate_slippage_pts as ig_slippage_pts
 from bot.risk.risk_manager import RiskManager
-from bot.strategy import _kronos_progress
+from bot.strategy import kronos_progress
 from bot.trading_hours import is_market_open, is_safe_for_entry
 
 if TYPE_CHECKING:
@@ -267,7 +267,7 @@ class RerankRunner:
         async def _fetch(epic: str) -> list[Candle]:
             return ctx.store.get_candles(epic)
 
-        _kronos_progress.reset_counter()
+        kronos_progress.reset_counter()
         ctx.rerank_status.update(phase="inference", phase_started_at=time.time())
         signals: list[AssetSignal] = await ctx.topk_strategy.scan(watchlist, _fetch)
         ctx.topk_signals = signals

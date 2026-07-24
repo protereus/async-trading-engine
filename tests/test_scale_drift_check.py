@@ -1,4 +1,4 @@
-"""Tests for TradingBot._run_scale_drift_check — the D4 drift-check loop body.
+"""Tests for Lifecycle._run_scale_drift_check — the D4 drift-check loop body.
 
 The pure drift math is covered by tests/test_scale_guard.py.  These tests
 cover the orchestration the loop adds on top of it: severity → action
@@ -6,7 +6,7 @@ cover the orchestration the loop adds on top of it: severity → action
 (missing epic / candle, market-details failure, non-positive quote).
 
 The method is exercised by calling it unbound against a stub ``self`` that
-exposes only the four attributes it touches, so no real TradingBot (and no
+exposes only the four attributes it touches, so no real Lifecycle (and no
 network / GPU) is needed.
 """
 
@@ -16,8 +16,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from bot.core.lifecycle import Lifecycle
 from bot.core.models import Candle
-from bot.main import TradingBot
 
 
 def _candle(symbol: str, close: float) -> Candle:
@@ -46,10 +46,10 @@ def _bot(
     under test reaches the IG call.
     """
     bot = MagicMock()
-    bot.ctx.candle_epic_map = epic_map
-    bot.ctx.store.get_latest_candle = MagicMock(return_value=candle)
-    bot.ctx.ig_client.fetch_market_details = AsyncMock(return_value=market_details)
-    bot.ctx.alerter.send_error = AsyncMock(return_value=True)
+    bot._ctx.candle_epic_map = epic_map
+    bot._ctx.store.get_latest_candle = MagicMock(return_value=candle)
+    bot._ctx.ig_client.fetch_market_details = AsyncMock(return_value=market_details)
+    bot._ctx.alerter.send_error = AsyncMock(return_value=True)
     return bot
 
 
@@ -68,8 +68,8 @@ class TestRunScaleDriftCheck:
             # real_scale = 130 / 100 = 1.30 vs configured 1.0 → +30 %
             market_details={"snapshot": {"bid": 129.99, "offer": 130.01}},
         )
-        await TradingBot._run_scale_drift_check(bot)
-        bot.ctx.alerter.send_error.assert_awaited_once()
+        await Lifecycle._run_scale_drift_check(bot)
+        bot._ctx.alerter.send_error.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_warn_drift_does_not_alert(self) -> None:
@@ -81,8 +81,8 @@ class TestRunScaleDriftCheck:
             # real_scale = 110 / 100 = 1.10 vs configured 1.0 → +10 %
             market_details={"snapshot": {"bid": 109.5, "offer": 110.5}},
         )
-        await TradingBot._run_scale_drift_check(bot)
-        bot.ctx.alerter.send_error.assert_not_awaited()
+        await Lifecycle._run_scale_drift_check(bot)
+        bot._ctx.alerter.send_error.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_clean_symbol_does_not_alert(self) -> None:
@@ -95,8 +95,8 @@ class TestRunScaleDriftCheck:
             # mid 4466.75 = 4466.75 × 1.0 → real_scale == expected → no drift.
             market_details={"snapshot": {"bid": 4466.25, "offer": 4467.25}},
         )
-        await TradingBot._run_scale_drift_check(bot)
-        bot.ctx.alerter.send_error.assert_not_awaited()
+        await Lifecycle._run_scale_drift_check(bot)
+        bot._ctx.alerter.send_error.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_market_details_failure_is_swallowed(self) -> None:
@@ -106,9 +106,9 @@ class TestRunScaleDriftCheck:
             candle=_candle("XAU/USD", 130.65),
             market_details={},
         )
-        bot.ctx.ig_client.fetch_market_details = AsyncMock(side_effect=RuntimeError("IG 503"))
-        await TradingBot._run_scale_drift_check(bot)  # must not raise
-        bot.ctx.alerter.send_error.assert_not_awaited()
+        bot._ctx.ig_client.fetch_market_details = AsyncMock(side_effect=RuntimeError("IG 503"))
+        await Lifecycle._run_scale_drift_check(bot)  # must not raise
+        bot._ctx.alerter.send_error.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_missing_candle_skips_before_ig_call(self) -> None:
@@ -118,9 +118,9 @@ class TestRunScaleDriftCheck:
             candle=None,
             market_details={"snapshot": {"bid": 8855.0, "offer": 8855.4}},
         )
-        await TradingBot._run_scale_drift_check(bot)
-        bot.ctx.ig_client.fetch_market_details.assert_not_awaited()
-        bot.ctx.alerter.send_error.assert_not_awaited()
+        await Lifecycle._run_scale_drift_check(bot)
+        bot._ctx.ig_client.fetch_market_details.assert_not_awaited()
+        bot._ctx.alerter.send_error.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_non_positive_quote_skips(self) -> None:
@@ -130,5 +130,5 @@ class TestRunScaleDriftCheck:
             candle=_candle("XAU/USD", 130.65),
             market_details={"snapshot": {"bid": 0.0, "offer": 0.0}},
         )
-        await TradingBot._run_scale_drift_check(bot)
-        bot.ctx.alerter.send_error.assert_not_awaited()
+        await Lifecycle._run_scale_drift_check(bot)
+        bot._ctx.alerter.send_error.assert_not_awaited()

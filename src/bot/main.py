@@ -30,16 +30,13 @@ from bot.core.models import (
 from bot.data.candle_db import CandleDB
 from bot.data.store import DataStore
 from bot.execution.ig_close import IGCloseManager
-from bot.execution.ig_convert import (
-    safe_float,
-)
 from bot.monitoring.health import HealthMonitor
 from bot.monitoring.telegram_alerts import TelegramAlerter
 from bot.risk.risk_config import RiskConfig
 from bot.risk.risk_manager import RiskManager
 from bot.state.rerank_status import RerankStatusWriter
 from bot.state.state_manager import StateManager
-from bot.strategy import _kronos_progress
+from bot.strategy import kronos_progress
 from bot.strategy.rerank_runner import RerankRunner
 from bot.trading_hours import in_equity_mark_blackout
 
@@ -206,11 +203,10 @@ class TradingBot:
         self.ctx.closer = IGCloseManager(self.ctx)
         self.ctx.runner = RerankRunner(self.ctx)
         self.ctx.events = EventWiring(self.ctx)
-        _kronos_progress.set_progress_callback(self._on_kronos_progress)
+        kronos_progress.set_progress_callback(self._on_kronos_progress)
 
-        # Lifecycle (broker init + start/shutdown sequencing) gets the bot
-        # itself: it is the composition root's delegate and also owns
-        # starting bot-level loops like _scale_drift_loop.
+        # Lifecycle (broker init + start/shutdown sequencing) is the
+        # composition root's delegate; it owns _scale_drift_loop directly.
         self.ctx.lifecycle = Lifecycle(self)
         self.ctx.lifecycle.init_ig()
 
@@ -223,7 +219,7 @@ class TradingBot:
         await self.ctx.lifecycle.shutdown()
 
     def _on_kronos_progress(self, batch_index: int, snapshot: dict[str, Any] | None) -> None:
-        """Callback registered with ``_kronos_progress``.
+        """Callback registered with ``kronos_progress``.
 
         Fires on every throttled tqdm emission inside Kronos's
         ``auto_regressive_inference`` (verbose Pass-1 calls, with an inner-bar
@@ -236,94 +232,6 @@ class TradingBot:
             batches_done=max(0, batch_index - 1),
             current_batch=snapshot,
         )
-
-    async def _scale_drift_loop(self) -> None:
-        """Daily: check IG-quote-vs-candle scale drift for ETF-proxied symbols.
-
-        D4 of .  Catches the silent
-        mis-scaling that produced the 2026-05-28 USO/UNG P&L errors and
-        ghost take-profits.  Detection + alert only — no trading-state
-        mutation.  Runs once shortly after startup, then every 24 h.
-        """
-        # Small initial delay so the candle store has been warmed by the
-        # feeds before the first check (avoids spurious "no candle" skips).
-        try:
-            await asyncio.wait_for(self.ctx.shutdown_event.wait(), timeout=300.0)
-            return  # shutdown came first
-        except TimeoutError:
-            pass
-        while not self.ctx.shutdown_event.is_set():
-            try:
-                await self._run_scale_drift_check()
-            except Exception:
-                logger.exception("scale_drift check error")
-            try:
-                await asyncio.wait_for(self.ctx.shutdown_event.wait(), timeout=86_400.0)
-                break
-            except TimeoutError:
-                pass
-
-    async def _run_scale_drift_check(self) -> None:
-        """Compare configured scale to live IG-vs-candle ratio for every
-        explicitly-scaled symbol (the ``IG_SCALED_SYMBOLS`` set — forex
-        pairs use stable defaults and can't drift)."""
-        from bot.execution.ig_quote_scale import IG_SCALED_SYMBOLS
-        from bot.risk.scale_guard import DriftSeverity, compute_drift
-
-        checked = 0
-        for symbol in IG_SCALED_SYMBOLS:
-            epic = self.ctx.candle_epic_map.get(symbol)
-            if epic is None:
-                continue
-            latest = self.ctx.store.get_latest_candle(symbol)
-            if latest is None:
-                continue
-            try:
-                details = await self.ctx.ig_client.fetch_market_details(epic)
-                snap = details.get("snapshot", {})
-                bid = safe_float(snap.get("bid"))
-                offer = safe_float(snap.get("offer"))
-            except Exception:
-                logger.exception("scale_drift: market-details fetch failed for %s", symbol)
-                continue
-            if bid <= 0 or offer <= 0:
-                continue
-            ig_mid = (bid + offer) / 2.0
-            result = compute_drift(symbol, latest.close, ig_mid)
-            if result is None:
-                continue
-            checked += 1
-            if result.severity is DriftSeverity.CRITICAL:
-                logger.critical(
-                    "SCALE DRIFT %s: %.1f%% — candle=%.4f × cfg_scale=%.2f ≠ IG_mid=%.2f "
-                    "(real_scale=%.2f). P&L on any %s position is mis-stated by ~%.0f%%.",
-                    symbol,
-                    result.drift * 100,
-                    result.candle_price,
-                    result.expected_scale,
-                    result.ig_mid,
-                    result.real_scale,
-                    symbol,
-                    result.implied_pnl_error * 100,
-                )
-                try:
-                    await self.ctx.alerter.send_error(
-                        f"SCALE DRIFT {symbol}: {result.drift:+.1%} "
-                        f"(real_scale={result.real_scale:.1f} vs cfg={result.expected_scale:.1f}). "
-                        f"P&L mis-stated ~{result.implied_pnl_error:.0%}. Review before trusting "
-                        f"{symbol} P&L."
-                    )
-                except Exception:
-                    logger.exception("scale_drift alert failed for %s", symbol)
-            elif result.severity is DriftSeverity.WARN:
-                logger.warning(
-                    "scale drift %s: %.1f%% (real_scale=%.2f vs cfg=%.2f) — monitoring",
-                    symbol,
-                    result.drift * 100,
-                    result.real_scale,
-                    result.expected_scale,
-                )
-        logger.info("scale_drift check complete: %d symbols evaluated", checked)
 
     # ------------------------------------------------------------------
     # Strategy loop

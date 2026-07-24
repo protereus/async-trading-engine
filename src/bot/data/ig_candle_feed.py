@@ -53,6 +53,8 @@ from bot.core.event_bus import EVENT_NEW_CANDLE
 # through the EODHD map — CS.D.USCGC.TODAY.IP / CS.D.USCSI.TODAY.IP.
 from bot.data.eodhd_symbols import SYMBOL_EPIC_MAP
 from bot.data.ig_candle_aggregator import IG_NATIVE_CANDLE_SYMBOLS, IGCandleAggregator
+from bot.data.ig_history import fetch_ig_hourly_backfill
+from bot.data.ig_ls_connection import _install_ssl_factory
 from bot.trading_hours import is_market_open
 
 if TYPE_CHECKING:
@@ -295,8 +297,6 @@ class IGCandleLSFeed:
         """
         if self._candle_db is None:
             return
-        from bot.data.ig_history import fetch_ig_hourly_backfill
-
         for epic, symbol in self._epic_to_symbol.items():
             existing = self._candle_db.get_candles(symbol, limit=1)
             if not existing:
@@ -335,8 +335,6 @@ class IGCandleLSFeed:
         strategy's real requirement), not ``candle_buffer_size`` (which the live
         feed fills over time), mirroring ``EODHDFeed._backfill_below_threshold``.
         """
-        from bot.data.ig_history import fetch_ig_hourly_backfill
-
         threshold = self._config.kronos_context_bars
         limit = self._config.candle_buffer_size
 

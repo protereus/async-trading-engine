@@ -3,6 +3,57 @@
 from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from bot.data.eodhd_symbols import EODHD_UNIVERSE
+
+# Class names accepted by TOPK_RANKING_HORIZON_BY_CLASS — exactly the classes
+# ``bot.strategy.topk_strategy.ranking_class_for`` can resolve for the live
+# universe.
+RANKING_HORIZON_CLASSES: frozenset[str] = frozenset(
+    {"us_equity" if s.asset_class == "equity" else s.asset_class for s in EODHD_UNIVERSE.values()}
+)
+
+
+def parse_ranking_horizon_by_class(raw: str, pred_len: int) -> dict[str, int]:
+    """Parse ``TOPK_RANKING_HORIZON_BY_CLASS`` ("forex:48,us_equity:24,metal:24").
+
+    Raises ValueError on malformed pairs, unknown class names, or H outside
+    [1, pred_len] — callers (``BotConfig.validate_config``) surface this at
+    startup rather than silently mis-slicing.  Empty/blank input → ``{}``
+    (per-class overrides disabled).
+    """
+    result: dict[str, int] = {}
+    if not raw.strip():
+        return result
+    for pair in raw.split(","):
+        cls, sep, h_str = pair.strip().partition(":")
+        cls = cls.strip()
+        if not sep or not cls or not h_str.strip():
+            raise ValueError(
+                f"TOPK_RANKING_HORIZON_BY_CLASS: malformed pair {pair!r} "
+                "(expected 'class:bars', e.g. 'us_equity:24')"
+            )
+        if cls not in RANKING_HORIZON_CLASSES:
+            raise ValueError(
+                f"TOPK_RANKING_HORIZON_BY_CLASS: unknown class {cls!r} "
+                f"(valid: {', '.join(sorted(RANKING_HORIZON_CLASSES))})"
+            )
+        try:
+            horizon = int(h_str.strip())
+        except ValueError as exc:
+            raise ValueError(
+                f"TOPK_RANKING_HORIZON_BY_CLASS: non-integer horizon {h_str.strip()!r} "
+                f"for class {cls!r}"
+            ) from exc
+        if not 1 <= horizon <= pred_len:
+            raise ValueError(
+                f"TOPK_RANKING_HORIZON_BY_CLASS: horizon {horizon} for class {cls!r} "
+                f"outside [1, pred_len={pred_len}]"
+            )
+        if cls in result:
+            raise ValueError(f"TOPK_RANKING_HORIZON_BY_CLASS: duplicate class {cls!r}")
+        result[cls] = horizon
+    return result
+
 
 class BotConfig(BaseSettings):
     # Broker selection. IG is the only supported broker; kept as a field so a
@@ -138,8 +189,8 @@ class BotConfig(BaseSettings):
     # Per-asset-class ranking horizon overriding the global scalar, format
     # "forex:24,us_equity:12,metal:24" (classes from the symbol universe;
     # equities are labelled us_equity).  Parsed + validated by
-    # bot.strategy.topk_strategy.parse_ranking_horizon_by_class at
-    # validate_config() — unknown classes or H > pred_len fail at startup.
+    # parse_ranking_horizon_by_class (this module) at validate_config() —
+    # unknown classes or H > pred_len fail at startup.
     # Empty (default) = global topk_ranking_horizon_bars applies to all.
     # Changing the ranking horizon shifts the signal distribution, so couple
     # any change with a threshold recalibration at the chosen horizon.
@@ -256,11 +307,8 @@ class BotConfig(BaseSettings):
             )
 
         if self.topk_ranking_horizon_by_class:
-            # Imported lazily — the strategy module pulls pandas/numpy, which
-            # config import-time must not depend on.  Raises ValueError on
-            # unknown class names or horizons outside [1, pred_len].
-            from bot.strategy.topk_strategy import parse_ranking_horizon_by_class
-
+            # Raises ValueError on unknown class names or horizons outside
+            # [1, pred_len].
             parse_ranking_horizon_by_class(self.topk_ranking_horizon_by_class, self.topk_pred_len)
 
         if self.tp_sentiment_reversal_enabled and not self.sentiment_enabled:

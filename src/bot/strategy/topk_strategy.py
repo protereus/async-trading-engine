@@ -50,10 +50,11 @@ if TYPE_CHECKING:
 import numpy as np
 import pandas as pd
 
+from bot.config import parse_ranking_horizon_by_class
 from bot.core.models import PersistedAssetSignal
 from bot.data.eodhd_symbols import EODHD_UNIVERSE
 from bot.data.eodhd_symbols import VOLUME_SYMBOLS as _EODHD_VOLUME_SYMBOLS
-from bot.strategy import _kronos_progress
+from bot.strategy import kronos_progress
 from bot.strategy.correlation import CorrelationConfig, CorrelationTracker
 from bot.strategy.kronos_signals import KronosPathSignal, extract_path_signal
 
@@ -99,55 +100,6 @@ def ranking_class_for(symbol: str) -> str | None:
     if entry is None:
         return None
     return "us_equity" if entry.asset_class == "equity" else entry.asset_class
-
-
-# Class names accepted by TOPK_RANKING_HORIZON_BY_CLASS — exactly the classes
-# ``ranking_class_for`` can resolve for the live universe.
-RANKING_HORIZON_CLASSES: frozenset[str] = frozenset(
-    {"us_equity" if s.asset_class == "equity" else s.asset_class for s in EODHD_UNIVERSE.values()}
-)
-
-
-def parse_ranking_horizon_by_class(raw: str, pred_len: int) -> dict[str, int]:
-    """Parse ``TOPK_RANKING_HORIZON_BY_CLASS`` ("forex:48,us_equity:24,metal:24").
-
-    Raises ValueError on malformed pairs, unknown class names, or H outside
-    [1, pred_len] — callers (``BotConfig.validate_config``) surface this at
-    startup rather than silently mis-slicing.  Empty/blank input → ``{}``
-    (per-class overrides disabled).
-    """
-    result: dict[str, int] = {}
-    if not raw.strip():
-        return result
-    for pair in raw.split(","):
-        cls, sep, h_str = pair.strip().partition(":")
-        cls = cls.strip()
-        if not sep or not cls or not h_str.strip():
-            raise ValueError(
-                f"TOPK_RANKING_HORIZON_BY_CLASS: malformed pair {pair!r} "
-                "(expected 'class:bars', e.g. 'us_equity:24')"
-            )
-        if cls not in RANKING_HORIZON_CLASSES:
-            raise ValueError(
-                f"TOPK_RANKING_HORIZON_BY_CLASS: unknown class {cls!r} "
-                f"(valid: {', '.join(sorted(RANKING_HORIZON_CLASSES))})"
-            )
-        try:
-            horizon = int(h_str.strip())
-        except ValueError as exc:
-            raise ValueError(
-                f"TOPK_RANKING_HORIZON_BY_CLASS: non-integer horizon {h_str.strip()!r} "
-                f"for class {cls!r}"
-            ) from exc
-        if not 1 <= horizon <= pred_len:
-            raise ValueError(
-                f"TOPK_RANKING_HORIZON_BY_CLASS: horizon {horizon} for class {cls!r} "
-                f"outside [1, pred_len={pred_len}]"
-            )
-        if cls in result:
-            raise ValueError(f"TOPK_RANKING_HORIZON_BY_CLASS: duplicate class {cls!r}")
-        result[cls] = horizon
-    return result
 
 
 def _load_kronos_offline_first(loader: Callable[..., Any], repo: str, label: str) -> Any:
@@ -198,7 +150,7 @@ def _bump_variance_progress(done: int, total: int, t0: float, grp_label: str) ->
     """
     now = time.monotonic()
     rate = (now - t0) / done if done else 0.0
-    _kronos_progress.bump_batch(
+    kronos_progress.bump_batch(
         {
             "current": done,
             "total": total,
@@ -479,8 +431,8 @@ class TopKStrategy:
         # Patch ``tqdm.trange`` before Kronos's ``model.kronos`` resolves it at
         # import time. Without this, the autoregressive progress bar reaches
         # journald as ``\r``-separated control bytes and corrupts neighbouring
-        # log entries (see ``_kronos_progress`` docstring).
-        from bot.strategy._kronos_progress import install as _install_kronos_progress
+        # log entries (see ``kronos_progress`` docstring).
+        from bot.strategy.kronos_progress import install as _install_kronos_progress
 
         _install_kronos_progress()
 

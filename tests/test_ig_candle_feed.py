@@ -304,7 +304,7 @@ class TestBackfillIfNeeded:
         # Probe returns a fresh IG bar at the same basis (ratio ≈ 1 → no wipe).
         probe = _ig_bars("XAU/USD", 1, base_close=4470.0)
         with patch(
-            "bot.data.ig_history.fetch_ig_hourly_backfill",
+            "bot.data.ig_candle_feed.fetch_ig_hourly_backfill",
             new=AsyncMock(return_value=probe),
         ) as mock_fetch:
             await feed._backfill_if_needed()
@@ -327,7 +327,7 @@ class TestBackfillIfNeeded:
         feed._candle_db.insert_candles = MagicMock()
         bars = _ig_bars("XAU/USD", 3)
         with patch(
-            "bot.data.ig_history.fetch_ig_hourly_backfill",
+            "bot.data.ig_candle_feed.fetch_ig_hourly_backfill",
             new=AsyncMock(return_value=bars),
         ) as mock_fetch:
             await feed._backfill_if_needed()
@@ -350,7 +350,7 @@ class TestBackfillIfNeeded:
         feed._candle_db.insert_candles = MagicMock()
         # First call = probe (limit 1, IG basis); subsequent = full backfill.
         with patch(
-            "bot.data.ig_history.fetch_ig_hourly_backfill",
+            "bot.data.ig_candle_feed.fetch_ig_hourly_backfill",
             new=AsyncMock(side_effect=[ig_bars[:1], ig_bars]),
         ):
             await feed._backfill_if_needed()
@@ -364,7 +364,7 @@ class TestBackfillIfNeeded:
         feed._candle_db.get_candles = MagicMock(return_value=_ig_bars("XAU/USD", 2, 4466.0))
         feed._candle_db.delete_candles_for_symbol = MagicMock(return_value=0)
         with patch(
-            "bot.data.ig_history.fetch_ig_hourly_backfill",
+            "bot.data.ig_candle_feed.fetch_ig_hourly_backfill",
             new=AsyncMock(return_value=_ig_bars("XAU/USD", 1, 4466.0)),
         ):
             await feed._backfill_if_needed()
@@ -378,7 +378,7 @@ class TestBackfillIfNeeded:
         feed._candle_db = None
         bars = _ig_bars("XAU/USD", 3)
         with patch(
-            "bot.data.ig_history.fetch_ig_hourly_backfill",
+            "bot.data.ig_candle_feed.fetch_ig_hourly_backfill",
             new=AsyncMock(return_value=bars),
         ):
             await feed._backfill_if_needed()
@@ -392,7 +392,7 @@ class TestBackfillIfNeeded:
         feed._candle_db.get_candles = MagicMock(return_value=[])
         feed._candle_db.insert_candles = MagicMock()
         with patch(
-            "bot.data.ig_history.fetch_ig_hourly_backfill",
+            "bot.data.ig_candle_feed.fetch_ig_hourly_backfill",
             new=AsyncMock(return_value=[]),
         ):
             await feed._backfill_if_needed()  # must not raise
