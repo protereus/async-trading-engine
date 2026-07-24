@@ -198,6 +198,129 @@ class TakeProfitManager:
         state = self._positions.get(symbol)
         return state.current_trailing_stop if state is not None else None
 
+    def _check_trailing_stop(
+        self,
+        symbol: str,
+        state: PositionTPState,
+        current_price: float,
+        profit_pct: float,
+        stop_pct: float,
+    ) -> ExitDecision | None:
+        """Priorities 2 & 3: arm/ratchet the trailing stop, exit if crossed.
+
+        Mutates *state* (trail_armed / breakeven_armed / current_trailing_stop)
+        even when no exit fires — arming persists for future evaluations.
+        """
+        if not (self._config.trailing_enabled and stop_pct > 0):
+            return None
+
+        # Stage 2: ratchet trail — takes priority over Stage 1
+        if profit_pct >= stop_pct * self._config.trail_activation_mult:
+            state.trail_armed = True
+            state.breakeven_armed = True  # Stage 2 implies Stage 1 passed
+            trail_pct = stop_pct * self._config.trail_multiplier
+            new_trail = state.peak_price * (1.0 - trail_pct)
+            if state.current_trailing_stop is None or new_trail > state.current_trailing_stop:
+                state.current_trailing_stop = new_trail
+                logger.debug(
+                    "TP trail ratchet: %s peak=%.4f stop=%.4f",
+                    symbol,
+                    state.peak_price,
+                    new_trail,
+                )
+
+        # Stage 1: breakeven — only if Stage 2 not yet armed
+        elif (
+            not state.breakeven_armed
+            and profit_pct >= stop_pct * self._config.breakeven_activation_mult
+        ):
+            state.breakeven_armed = True
+            breakeven_stop = state.entry_price * (1.0 + self._config.breakeven_buffer)
+            if state.current_trailing_stop is None or breakeven_stop > state.current_trailing_stop:
+                state.current_trailing_stop = breakeven_stop
+            logger.debug("TP breakeven armed: %s stop=%.4f", symbol, state.current_trailing_stop)
+
+        # Exit if price crossed any trailing stop level
+        if (
+            state.current_trailing_stop is not None
+            and current_price <= state.current_trailing_stop
+        ):
+            reason = (
+                ExitReason.TRAILING_STOP_RATCHET
+                if state.trail_armed
+                else ExitReason.TRAILING_STOP_BREAKEVEN
+            )
+            return ExitDecision(
+                True,
+                reason,
+                f"price={current_price:.4f} <= trailing_stop={state.current_trailing_stop:.4f}",
+                target_price=state.current_trailing_stop,
+            )
+        return None
+
+    def _check_static_take_profit(
+        self, state: PositionTPState, current_price: float, stop_pct: float
+    ) -> ExitDecision | None:
+        """Priority 5: fixed take-profit target derived from the path/mean-return signal."""
+        if not (self._config.static_enabled and stop_pct > 0):
+            return None
+
+        if state.predicted_mfe_pct is not None:
+            # Phase 9b: path-derived target; fallback is mean_return × fraction
+            tp_pct = max(
+                stop_pct * self._config.min_rr_multiplier,
+                state.predicted_mfe_pct * self._config.kronos_mfe_capture_fraction,
+            )
+            tp_source = f"target derived from predicted_mfe_pct={state.predicted_mfe_pct:.4f}"
+        else:
+            tp_pct = max(
+                stop_pct * self._config.min_rr_multiplier,
+                state.entry_mean_return * self._config.kronos_target_fraction,
+            )
+            tp_source = (
+                f"target from mean_return={state.entry_mean_return:.4f}"
+                f" × {self._config.kronos_target_fraction}"
+            )
+        tp_price = state.entry_price * (1.0 + tp_pct)
+        if current_price >= tp_price:
+            return ExitDecision(
+                True,
+                ExitReason.STATIC_TP,
+                f"price={current_price:.4f} >= tp_price={tp_price:.4f} ({tp_source})",
+                target_price=tp_price,
+            )
+        return None
+
+    def _check_time_exit(self, state: PositionTPState, now_ms: int) -> ExitDecision | None:
+        """Priority 6: time-based exit — grace period past the predicted peak, or max age."""
+        if not self._config.time_enabled:
+            return None
+
+        if state.predicted_peak_bar is not None:
+            # Phase 9b: exit grace_hours after the predicted price peak
+            peak_ms = state.opened_at_ms + state.predicted_peak_bar * state.bar_interval_ms
+            grace_ms = int(self._config.time_post_peak_grace_hours * 3_600_000)
+            deadline_ms = peak_ms + grace_ms
+            if now_ms > deadline_ms:
+                return ExitDecision(
+                    True,
+                    ExitReason.TIME_LIMIT,
+                    (
+                        f"past predicted peak bar {state.predicted_peak_bar} "
+                        f"+ {self._config.time_post_peak_grace_hours:.0f}h grace"
+                    ),
+                )
+        else:
+            max_age_ms = int(self._pred_len * self._config.time_horizon_multiplier * 3_600_000)
+            age_ms = now_ms - state.opened_at_ms
+            if age_ms >= max_age_ms:
+                return ExitDecision(
+                    True,
+                    ExitReason.TIME_LIMIT,
+                    f"age={age_ms / 3_600_000:.1f}h >= max={max_age_ms / 3_600_000:.1f}h",
+                )
+        return None
+
     def evaluate_price(self, symbol: str, current_price: float, now_ms: int) -> ExitDecision:
         """Evaluate trailing stop, static TP, and time exit on each confirmed candle.
 
@@ -215,108 +338,19 @@ class TakeProfitManager:
         profit_pct = (current_price - state.entry_price) / state.entry_price
         stop_pct = state.entry_stop_pct
 
-        # --- Trailing stop (priorities 2 & 3) ---
-        if self._config.trailing_enabled and stop_pct > 0:
-            # Stage 2: ratchet trail — takes priority over Stage 1
-            if profit_pct >= stop_pct * self._config.trail_activation_mult:
-                state.trail_armed = True
-                state.breakeven_armed = True  # Stage 2 implies Stage 1 passed
-                trail_pct = stop_pct * self._config.trail_multiplier
-                new_trail = state.peak_price * (1.0 - trail_pct)
-                if state.current_trailing_stop is None or new_trail > state.current_trailing_stop:
-                    state.current_trailing_stop = new_trail
-                    logger.debug(
-                        "TP trail ratchet: %s peak=%.4f stop=%.4f",
-                        symbol,
-                        state.peak_price,
-                        new_trail,
-                    )
+        trailing_stop_exit = self._check_trailing_stop(
+            symbol, state, current_price, profit_pct, stop_pct
+        )
+        if trailing_stop_exit is not None:
+            return trailing_stop_exit
 
-            # Stage 1: breakeven — only if Stage 2 not yet armed
-            elif (
-                not state.breakeven_armed
-                and profit_pct >= stop_pct * self._config.breakeven_activation_mult
-            ):
-                state.breakeven_armed = True
-                breakeven_stop = state.entry_price * (1.0 + self._config.breakeven_buffer)
-                if (
-                    state.current_trailing_stop is None
-                    or breakeven_stop > state.current_trailing_stop
-                ):
-                    state.current_trailing_stop = breakeven_stop
-                logger.debug(
-                    "TP breakeven armed: %s stop=%.4f", symbol, state.current_trailing_stop
-                )
+        static_tp_exit = self._check_static_take_profit(state, current_price, stop_pct)
+        if static_tp_exit is not None:
+            return static_tp_exit
 
-            # Exit if price crossed any trailing stop level
-            if (
-                state.current_trailing_stop is not None
-                and current_price <= state.current_trailing_stop
-            ):
-                reason = (
-                    ExitReason.TRAILING_STOP_RATCHET
-                    if state.trail_armed
-                    else ExitReason.TRAILING_STOP_BREAKEVEN
-                )
-                return ExitDecision(
-                    True,
-                    reason,
-                    f"price={current_price:.4f} <= trailing_stop={state.current_trailing_stop:.4f}",
-                    target_price=state.current_trailing_stop,
-                )
-
-        # --- Static take-profit (priority 5) ---
-        if self._config.static_enabled and stop_pct > 0:
-            if state.predicted_mfe_pct is not None:
-                # path-derived target; fallback is mean_return × fraction
-                tp_pct = max(
-                    stop_pct * self._config.min_rr_multiplier,
-                    state.predicted_mfe_pct * self._config.kronos_mfe_capture_fraction,
-                )
-                tp_source = f"target derived from predicted_mfe_pct={state.predicted_mfe_pct:.4f}"
-            else:
-                tp_pct = max(
-                    stop_pct * self._config.min_rr_multiplier,
-                    state.entry_mean_return * self._config.kronos_target_fraction,
-                )
-                tp_source = (
-                    f"target from mean_return={state.entry_mean_return:.4f}"
-                    f" × {self._config.kronos_target_fraction}"
-                )
-            tp_price = state.entry_price * (1.0 + tp_pct)
-            if current_price >= tp_price:
-                return ExitDecision(
-                    True,
-                    ExitReason.STATIC_TP,
-                    f"price={current_price:.4f} >= tp_price={tp_price:.4f} ({tp_source})",
-                    target_price=tp_price,
-                )
-
-        # --- Time-based exit (priority 6) ---
-        if self._config.time_enabled:
-            if state.predicted_peak_bar is not None:
-                # exit grace_hours after the predicted price peak
-                peak_ms = state.opened_at_ms + state.predicted_peak_bar * state.bar_interval_ms
-                grace_ms = int(self._config.time_post_peak_grace_hours * 3_600_000)
-                deadline_ms = peak_ms + grace_ms
-                if now_ms > deadline_ms:
-                    return ExitDecision(
-                        True,
-                        ExitReason.TIME_LIMIT,
-                        (
-                            f"past predicted peak bar {state.predicted_peak_bar} "
-                            f"+ {self._config.time_post_peak_grace_hours:.0f}h grace"
-                        ),
-                    )
-            else:
-                max_age_ms = int(self._pred_len * self._config.time_horizon_multiplier * 3_600_000)
-                age_ms = now_ms - state.opened_at_ms
-                if age_ms >= max_age_ms:
-                    return ExitDecision(
-                        True,
-                        ExitReason.TIME_LIMIT,
-                        f"age={age_ms / 3_600_000:.1f}h >= max={max_age_ms / 3_600_000:.1f}h",
-                    )
+        time_exit = self._check_time_exit(state, now_ms)
+        if time_exit is not None:
+            return time_exit
 
         return ExitDecision(False, ExitReason.HOLD)
 
