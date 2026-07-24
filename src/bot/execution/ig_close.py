@@ -84,6 +84,9 @@ class IGCloseManager:
         non-trading rate limit (30 req/min/app).
         """
         ctx = self._ctx
+        if ctx.ig_client is None:
+            logger.error("reconcile_positions_with_ig called before Lifecycle.init_ig() — skipping")
+            return
         try:
             raw_positions = await ctx.ig_client.fetch_positions_raw()
             live_symbols: set[str] = set()
@@ -199,6 +202,11 @@ class IGCloseManager:
         from ``_candle_epic_map``.
         """
         ctx = self._ctx
+        if ctx.ig_client is None:
+            logger.error(
+                "close_ig_position called before Lifecycle.init_ig() — cannot close %s", symbol
+            )
+            return False
         epic = ctx.epic_for(symbol)
         deal_id = ctx.ig_deal_ids.get(symbol)
         if not deal_id:
@@ -246,11 +254,17 @@ class IGCloseManager:
         """
         ctx = self._ctx
         scale = ig_quote_scale(sym)
-        try:
-            txn = await ctx.ig_client.fetch_closed_transaction(opened_at_ms=pos.opened_at)
-        except Exception:
-            logger.exception("fetch_closed_transaction failed for %s", sym)
+        if ctx.ig_client is None:
+            logger.error(
+                "_resolve_external_close_summary called before Lifecycle.init_ig() for %s", sym
+            )
             txn = None
+        else:
+            try:
+                txn = await ctx.ig_client.fetch_closed_transaction(opened_at_ms=pos.opened_at)
+            except Exception:
+                logger.exception("fetch_closed_transaction failed for %s", sym)
+                txn = None
         if not isinstance(txn, dict):
             txn = None
         if txn is not None:

@@ -49,12 +49,26 @@ _original_trange: Any = None
 # inner 0/120 → 120/120 bar of the current call.
 _batch_counter: int = 0
 _progress_callback: Callable[[int, dict[str, Any] | None], None] | None = None
+# Set once a progress tick has fired with no callback registered yet, so the
+# boot-order convention (set_progress_callback before the first inference
+# call) violates loudly via one log line instead of silently dropping ticks.
+_warned_no_callback: bool = False
 
 
 def reset_counter() -> None:
     """Reset the per-rerank batch counter.  Call once before inference."""
     global _batch_counter
     _batch_counter = 0
+
+
+def _warn_if_no_callback() -> None:
+    global _warned_no_callback
+    if not _warned_no_callback:
+        _warned_no_callback = True
+        logger.warning(
+            "Kronos progress tick fired before set_progress_callback() was called — "
+            "dashboard progress will be missing until the callback is registered"
+        )
 
 
 def bump_batch(snapshot: dict[str, Any] | None = None) -> None:
@@ -75,6 +89,8 @@ def bump_batch(snapshot: dict[str, Any] | None = None) -> None:
             _progress_callback(_batch_counter, snapshot)
         except Exception:
             logger.debug("Kronos bump_batch callback failed", exc_info=True)
+    else:
+        _warn_if_no_callback()
 
 
 def set_progress_callback(cb: Callable[[int, dict[str, Any] | None], None] | None) -> None:
@@ -161,6 +177,8 @@ class _LoggingTrange:
                 )
             except Exception:
                 logger.debug("Kronos progress callback failed", exc_info=True)
+        else:
+            _warn_if_no_callback()
 
 
 def install(

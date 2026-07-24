@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -592,6 +592,163 @@ class TestHeartbeat:
 
         assert feed._adapter_set_error is True
         feed._loop.call_soon_threadsafe.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# schedule_reconnect / reconnect_with_backoff — the bare-DISCONNECTED path
+# (distinct from force_full_reconnect's heartbeat-driven REST-reauth path).
+# ---------------------------------------------------------------------------
+
+
+class TestScheduleReconnect:
+    def test_schedules_reconnect_task_when_idle(self) -> None:
+        feed, *_ = _make_feed()
+        feed._loop = MagicMock()
+        created_task = MagicMock()
+        feed._loop.create_task = MagicMock(return_value=created_task)
+
+        feed._conn.schedule_reconnect()
+
+        assert feed._reconnect_scheduled is True
+        feed._loop.create_task.assert_called_once()
+        # create_task is mocked so the real coroutine never runs — close it
+        # explicitly to avoid a "coroutine was never awaited" warning.
+        feed._loop.create_task.call_args.args[0].close()
+
+    def test_no_op_when_already_scheduled(self) -> None:
+        feed, *_ = _make_feed()
+        feed._loop = MagicMock()
+        feed._reconnect_scheduled = True
+
+        feed._conn.schedule_reconnect()
+
+        feed._loop.create_task.assert_not_called()
+
+    def test_no_op_when_closing(self) -> None:
+        feed, *_ = _make_feed()
+        feed._loop = MagicMock()
+        feed._closing = True
+
+        feed._conn.schedule_reconnect()
+
+        feed._loop.create_task.assert_not_called()
+        assert feed._reconnect_scheduled is False
+
+    def test_marks_scheduled_but_skips_task_creation_when_loop_unset(self) -> None:
+        """Defensive branch: schedule_reconnect fires from the SDK thread via
+        call_soon_threadsafe, which itself requires a loop reference — so
+        ``_loop is None`` shouldn't happen live, but the guard must not crash."""
+        feed, *_ = _make_feed()
+        assert feed._loop is None
+
+        feed._conn.schedule_reconnect()
+
+        assert feed._reconnect_scheduled is True
+
+
+@pytest.mark.preflight
+class TestReconnectWithBackoff:
+    @pytest.mark.asyncio
+    async def test_successful_reconnect_resets_state(self) -> None:
+        import time as _time
+
+        feed, *_ = _make_feed()
+        feed._reconnect_scheduled = True
+        feed._reconnect_attempt = 2
+        feed._adapter_set_error = False
+        mock_ls = MagicMock()
+        feed._ls_client = mock_ls
+        connect = MagicMock()
+        feed._conn.connect_lightstreamer = connect  # type: ignore[method-assign]
+
+        with patch("bot.data.ig_ls_connection.asyncio.sleep", AsyncMock()) as sleep_mock:
+            await feed._conn.reconnect_with_backoff()
+
+        sleep_mock.assert_awaited_once()
+        # Exponential backoff from attempt=2: 5 * 2**2 = 20s
+        assert sleep_mock.await_args.args[0] == 20
+        mock_ls.disconnect.assert_called_once()
+        connect.assert_called_once()
+        assert feed._reconnect_scheduled is False
+        assert feed._reconnect_attempt == 0
+        assert feed._adapter_set_error is False
+        assert feed._last_tick_ts == 0.0
+        assert feed._started_at <= _time.monotonic()
+
+    @pytest.mark.asyncio
+    async def test_backoff_capped_at_max_delay(self) -> None:
+        feed, *_ = _make_feed()
+        feed._reconnect_attempt = 10  # 5 * 2**10 far exceeds the 60s cap
+        feed._conn.connect_lightstreamer = MagicMock()  # type: ignore[method-assign]
+
+        with patch("bot.data.ig_ls_connection.asyncio.sleep", AsyncMock()) as sleep_mock:
+            await feed._conn.reconnect_with_backoff()
+
+        assert sleep_mock.await_args.args[0] == 60
+
+    @pytest.mark.asyncio
+    async def test_adapter_set_error_uses_wide_jitter_backoff(self) -> None:
+        """Cause: 2 (adapter-set error) must use the 30-120s jitter window,
+        not the exponential backoff — rapid retries don't fix server mis-config."""
+        feed, *_ = _make_feed()
+        feed._adapter_set_error = True
+        feed._reconnect_attempt = 0
+        feed._conn.connect_lightstreamer = MagicMock()  # type: ignore[method-assign]
+
+        with patch("bot.data.ig_ls_connection.asyncio.sleep", AsyncMock()) as sleep_mock:
+            await feed._conn.reconnect_with_backoff()
+
+        delay = sleep_mock.await_args.args[0]
+        assert 30.0 <= delay <= 120.0
+
+    @pytest.mark.asyncio
+    async def test_no_op_when_closing_after_sleep(self) -> None:
+        """A close() during the backoff sleep must abort before touching the
+        (already-torn-down) LS client."""
+        feed, *_ = _make_feed()
+        connect = MagicMock()
+        feed._conn.connect_lightstreamer = connect  # type: ignore[method-assign]
+
+        async def _sleep_then_close(_delay: float) -> None:
+            feed._closing = True
+
+        with patch("bot.data.ig_ls_connection.asyncio.sleep", _sleep_then_close):
+            await feed._conn.reconnect_with_backoff()
+
+        connect.assert_not_called()
+        assert feed._reconnect_scheduled is False
+
+    @pytest.mark.asyncio
+    async def test_failed_connect_leaves_attempt_counter_for_next_retry(self) -> None:
+        """A failed connect_lightstreamer() must not reset _reconnect_attempt —
+        the next bare DISCONNECTED calls schedule_reconnect again and the
+        exponential backoff must keep climbing."""
+        feed, *_ = _make_feed()
+        feed._reconnect_attempt = 1
+        feed._conn.connect_lightstreamer = MagicMock(side_effect=RuntimeError("ls down"))  # type: ignore[method-assign]
+
+        with patch("bot.data.ig_ls_connection.asyncio.sleep", AsyncMock()):
+            await feed._conn.reconnect_with_backoff()
+
+        # attempt was incremented (1 -> 2) before the connect attempt, and the
+        # failure path does NOT reset it back to 0
+        assert feed._reconnect_attempt == 2
+        assert feed._reconnect_scheduled is False
+
+    @pytest.mark.asyncio
+    async def test_no_stale_client_to_disconnect_is_safe(self) -> None:
+        """When there's no prior _ls_client (e.g. very first reconnect after a
+        bare drop with no earlier successful connect), skip the teardown step
+        without erroring."""
+        feed, *_ = _make_feed()
+        feed._ls_client = None
+        connect = MagicMock()
+        feed._conn.connect_lightstreamer = connect  # type: ignore[method-assign]
+
+        with patch("bot.data.ig_ls_connection.asyncio.sleep", AsyncMock()):
+            await feed._conn.reconnect_with_backoff()
+
+        connect.assert_called_once()
 
 
 # ---------------------------------------------------------------------------

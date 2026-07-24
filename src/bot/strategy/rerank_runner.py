@@ -225,6 +225,7 @@ class RerankRunner:
         tracking is unchanged; the deadline math + in-progress flag stay in the
         scheduler (``topk_rerank_loop``)."""
         ctx = self._ctx
+        assert ctx.topk_strategy is not None, "topk_rerank_loop only runs when topk_strategy is set"
         watchlist = ctx.config.topk_watchlist or ctx.candle_symbols
         _now_wall = time.time()
         _batches_total = ctx.topk_strategy.expected_batches(watchlist)
@@ -263,6 +264,7 @@ class RerankRunner:
         """Pass-1/Pass-2 Kronos inference for the watchlist; returns the per-asset
         signals and stashes them on ``ctx.topk_signals``."""
         ctx = self._ctx
+        assert ctx.topk_strategy is not None, "topk_rerank_loop only runs when topk_strategy is set"
 
         async def _fetch(epic: str) -> list[Candle]:
             return ctx.store.get_candles(epic)
@@ -276,6 +278,7 @@ class RerankRunner:
     def _rerank_select(self, signals: list[AssetSignal]) -> list[str]:
         """Exclude monitor-only symbols then pick the open-market top-K."""
         ctx = self._ctx
+        assert ctx.topk_strategy is not None, "topk_rerank_loop only runs when topk_strategy is set"
         # Exclude monitor-only symbols (e.g. metals) from selection while
         # still letting their signals reach signal_history (written from
         # ``signals`` above, before this filter).  An open position on
@@ -298,6 +301,7 @@ class RerankRunner:
         Returns the shared ``scored_at`` ms timestamp so the correlation write
         tags the same instant."""
         ctx = self._ctx
+        assert ctx.topk_strategy is not None, "topk_rerank_loop only runs when topk_strategy is set"
         ctx.rerank_status.update(
             phase="signal_history",
             phase_started_at=time.time(),
@@ -373,6 +377,7 @@ class RerankRunner:
         """Persist the rolling asset-correlation snapshot, tagged with the shared
         ``scored_at`` timestamp from the signal-history write."""
         ctx = self._ctx
+        assert ctx.topk_strategy is not None, "topk_rerank_loop only runs when topk_strategy is set"
         ctx.rerank_status.update(phase="correlation", phase_started_at=time.time())
         try:
             _corr_snap = ctx.topk_strategy.snapshot_correlation()
@@ -446,6 +451,10 @@ class RerankRunner:
         """Gather live prices + balance, build the display-positions dict, and send
         the TopK rerank Telegram alert."""
         ctx = self._ctx
+        assert ctx.topk_strategy is not None, "topk_rerank_loop only runs when topk_strategy is set"
+        assert ctx.ig_client is not None, (
+            "ig_client must be set by init_ig() before the rerank loop runs"
+        )
         # Gather current prices for open positions' P&L display.
         # Convert the candle-source close to display units so post-D3
         # USO/UNG/SLV render as $/bbl / $/MMBtu / $/oz rather than the
@@ -469,9 +478,9 @@ class RerankRunner:
                 exc_info=True,
             )
         for _sym in ctx.state.positions:
-            _lp = _live_by_epic.get(ctx.epic_for(_sym))
-            if _lp is not None and _lp.current_price > 0:
-                _cur_prices[_sym] = ig_display_price(_sym, _lp.current_price)
+            _live_pos = _live_by_epic.get(ctx.epic_for(_sym))
+            if _live_pos is not None and _live_pos.current_price > 0:
+                _cur_prices[_sym] = ig_display_price(_sym, _live_pos.current_price)
                 continue
             _c = ctx.store.get_latest_candle(_sym)
             if _c is not None:
@@ -695,6 +704,9 @@ class RerankRunner:
         (snapped == requested) or a non-size reject re-raises to the caller — the
         slot is left unfilled and the next rerank re-selects, as before."""
         ctx = self._ctx
+        assert ctx.ig_client is not None, (
+            "ig_client must be set by init_ig() before the rerank loop runs"
+        )
         try:
             pending = await ctx.ig_client.place_order(order)
             confirmed = await ctx.ig_client.confirm_order(pending.order_id)
@@ -889,6 +901,10 @@ class RerankRunner:
         topk_signal: Any | None,
     ) -> None:
         ctx = self._ctx
+        assert ctx.ig_client is not None, (
+            "ig_client must be set by init_ig() before the rerank loop runs"
+        )
+        assert ctx.topk_strategy is not None, "topk_rerank_loop only runs when topk_strategy is set"
         try:
             # Pre-trade market-status gate.
             # Refuse to send the order if IG has the EPIC in any state other than

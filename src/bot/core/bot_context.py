@@ -18,12 +18,11 @@ groups:
 * **Late-bound slots** (``field(init=False)``) — the collaborators
   themselves, wired by ``TradingBot.__init__`` immediately after the context
   is created.  Reading one before wiring raises ``AttributeError`` loudly.
-* **Broker/feed objects** (``Any = None``) — populated by ``Lifecycle``;
-  ``None`` is a legitimate runtime value for the optional subsystems
-  (take-profit, sentiment, FRED, the per-exchange feeds), so consumers keep
-  their existing ``is not None`` guards.  They stay ``Any``-typed exactly as
-  they were on ``TradingBot``; tightening them to real Optionals is future
-  work that belongs with adding the missing guards.
+* **Broker/feed objects** (``SomeType | None = None``) — populated by
+  ``Lifecycle``.  ``None`` is a legitimate runtime value for the optional
+  subsystems (take-profit, sentiment, FRED, the per-exchange feeds), so
+  consumers must keep an explicit ``is not None`` guard before use — mypy
+  enforces this now that the slots carry real types instead of ``Any``.
 """
 
 from __future__ import annotations
@@ -40,16 +39,25 @@ if TYPE_CHECKING:
     from bot.core.lifecycle import Lifecycle
     from bot.core.models import BotState
     from bot.data.candle_db import CandleDB
+    from bot.data.eodhd_feed import EODHDFeed
+    from bot.data.ig_candle_feed import IGCandleLSFeed
+    from bot.data.ig_feed import IGFeed
     from bot.data.store import DataStore
+    from bot.data.twelve_data_feed import TwelveDataFeed
+    from bot.execution.ig_client import IGClient
     from bot.execution.ig_close import IGCloseManager
+    from bot.macro.fred import FREDClient
     from bot.monitoring.health import HealthMonitor
     from bot.monitoring.telegram_alerts import TelegramAlerter
     from bot.risk.risk_config import RiskConfig
     from bot.risk.risk_manager import RiskManager
+    from bot.risk.spread_monitor import SpreadMonitor
+    from bot.sentiment.engine import SentimentEngine
     from bot.state.rerank_status import RerankStatusWriter
     from bot.state.state_manager import StateManager
     from bot.strategy.rerank_runner import RerankRunner
-    from bot.strategy.topk_strategy import AssetSignal
+    from bot.strategy.take_profit import TakeProfitManager
+    from bot.strategy.topk_strategy import AssetSignal, TopKStrategy
 
 
 @dataclass
@@ -89,20 +97,20 @@ class BotContext:
     lifecycle: Lifecycle = field(init=False)
 
     # --- broker / strategy / feed objects (populated by Lifecycle) ---
-    ig_client: Any = None  # IGClient — always set by Lifecycle.init_ig()
+    ig_client: IGClient | None = None  # always set by Lifecycle.init_ig()
     # Spread-anomaly detector — always set by Lifecycle.init_ig() so the
     # pre-trade gate runs regardless of which candle feed is live (EODHD,
     # IG-native metals, or the legacy all-IG path).
-    spread_monitor: Any = None
-    ig_feed: Any = None  # IGFeed — set when candle_exchange="ig"
-    # IGCandleLSFeed — D1 IG-native candle aggregator (any IG path)
-    ig_candle_feed: Any = None
-    twelve_data_feed: Any = None  # TwelveDataFeed (candle_exchange="twelvedata")
-    eodhd_feed: Any = None  # EODHDFeed (candle_exchange="eodhd")
-    fred_client: Any = None  # FREDClient (when fred_api_key is set)
-    topk_strategy: Any = None  # TopKStrategy — set by Lifecycle.start()
-    sentiment_engine: Any = None  # SentimentEngine — set when sentiment_enabled=True
-    tp_manager: Any = None  # TakeProfitManager — set when topk_enabled=True
+    spread_monitor: SpreadMonitor | None = None
+    ig_feed: IGFeed | None = None  # set when candle_exchange="ig"
+    # D1 IG-native candle aggregator (any IG path)
+    ig_candle_feed: IGCandleLSFeed | None = None
+    twelve_data_feed: TwelveDataFeed | None = None  # candle_exchange="twelvedata"
+    eodhd_feed: EODHDFeed | None = None  # candle_exchange="eodhd"
+    fred_client: FREDClient | None = None  # when fred_api_key is set
+    topk_strategy: TopKStrategy | None = None  # set by Lifecycle.start()
+    sentiment_engine: SentimentEngine | None = None  # set when sentiment_enabled=True
+    tp_manager: TakeProfitManager | None = None  # set when topk_enabled=True
 
     # --- live position / selection state (mutated at runtime) ---
     ig_deal_ids: dict[str, str] = field(default_factory=dict)  # candle_symbol → IG deal ID
@@ -149,6 +157,9 @@ class BotContext:
         return sentinel, debug vs warning log) is preserved rather than
         collapsed into one behaviour here.
         """
+        assert self.ig_client is not None, (
+            "ig_client must be set by Lifecycle.init_ig() before refresh_balance()"
+        )
         balance: dict[str, Any] = await self.ig_client.fetch_balance()
         self.risk_manager.update_equity(balance["equity"])
         self.state.cash = balance["balance"]

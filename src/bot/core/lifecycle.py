@@ -123,6 +123,9 @@ class Lifecycle:
         """Instantiate the appropriate data feed and schedule it as an asyncio Task."""
         ctx = self._ctx
         if ctx.config.candle_exchange == "ig":
+            assert ctx.ig_feed is not None, (
+                "ig_feed must be set by init_ig() before build_feed_task()"
+            )
             return asyncio.create_task(ctx.ig_feed.run(), name="ig_feed")
         if ctx.config.candle_exchange == "twelvedata":
             from bot.data.twelve_data_feed import TwelveDataFeed
@@ -144,6 +147,7 @@ class Lifecycle:
         """Connect, load state, reconcile, and run until shutdown."""
         ctx = self._ctx
         # 1. Connect to broker
+        assert ctx.ig_client is not None, "ig_client must be set by init_ig() before start()"
         await ctx.ig_client.connect()
         logger.info(
             "IG connected: account=%s env=%s",
@@ -294,6 +298,7 @@ class Lifecycle:
         if ctx.config.candle_exchange != "eodhd" or IG_NATIVE_CANDLE_SYMBOLS:
             from bot.data.ig_candle_feed import IGCandleLSFeed
 
+            assert ctx.ig_client is not None, "ig_client must be set by init_ig() before start()"
             ctx.ig_candle_feed = IGCandleLSFeed(
                 ctx.ig_client,
                 ctx.store,
@@ -383,6 +388,9 @@ class Lifecycle:
         from bot.risk.scale_guard import DriftSeverity, compute_drift
 
         ctx = self._ctx
+        assert ctx.ig_client is not None, (
+            "ig_client must be set by init_ig() before the scale-drift loop runs"
+        )
         checked = 0
         for symbol in IG_SCALED_SYMBOLS:
             epic = ctx.candle_epic_map.get(symbol)
