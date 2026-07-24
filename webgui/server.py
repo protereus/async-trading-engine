@@ -72,13 +72,18 @@ async def index(request: Request) -> HTMLResponse:
         return HTMLResponse("Internal server error", status_code=500)
 
 
+def _json_error_response(label: str) -> JSONResponse:
+    """Log the failure with full detail server-side; return a detail-free 500 to the client."""
+    logger.error("API %s failed", label, exc_info=True)
+    return JSONResponse({"error": "Internal server error"}, status_code=500)
+
+
 @app.get("/api/snapshot")
 async def api_snapshot() -> JSONResponse:
     try:
         return JSONResponse(_data.snapshot())
     except Exception:
-        logger.error("API snapshot failed", exc_info=True)
-        return JSONResponse({"error": "Internal server error"}, status_code=500)
+        return _json_error_response("snapshot")
 
 
 @app.get("/api/signals")
@@ -88,13 +93,20 @@ async def api_signals() -> JSONResponse:
             {"signals": _data.latest_signals(), "accuracy": _data.signal_accuracy()}
         )
     except Exception:
-        logger.error("API signals failed", exc_info=True)
-        return JSONResponse({"error": "Internal server error"}, status_code=500)
+        return _json_error_response("signals")
+
+
+_LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
 
 
 def main() -> None:
     host = os.environ.get("WEBGUI_HOST", "127.0.0.1")
     port = int(os.environ.get("WEBGUI_PORT", "8080"))
+    if host not in _LOOPBACK_HOSTS and os.environ.get("WEBGUI_ALLOW_REMOTE") != "1":
+        raise RuntimeError(
+            f"WEBGUI_HOST={host!r} is not loopback and none of the dashboard routes are "
+            "authenticated. Set WEBGUI_ALLOW_REMOTE=1 to bind there anyway."
+        )
     uvicorn.run(app, host=host, port=port, log_level="info")
 
 
