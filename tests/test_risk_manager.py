@@ -6,6 +6,7 @@ All tests use fixed, deterministic values and a controlled clock function.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
@@ -36,11 +37,48 @@ def _make_clock(ts_ms: int = _NOW_MS):
     return lambda: ts_ms
 
 
-def _make_rm(config: RiskConfig | None = None, clock_ms: int = _NOW_MS) -> RiskManager:
+def _make_rm(
+    config: RiskConfig | None = None,
+    clock_ms: int = _NOW_MS,
+    in_blackout_fn: Callable[[], bool] | None = None,
+) -> RiskManager:
     bus = MagicMock(spec=EventBus)
     bus.emit = AsyncMock()
     cfg = config or RiskConfig()
-    return RiskManager(cfg, bus, clock_fn=_make_clock(clock_ms))
+    return RiskManager(cfg, bus, clock_fn=_make_clock(clock_ms), in_blackout_fn=in_blackout_fn)
+
+
+def _record_loss(rm: RiskManager, symbol: str, pnl: float, age_ms: int = 0) -> None:
+    """Arrange a loss-window entry *age_ms* before "now" by routing through the
+    public ``on_position_closed`` path with a temporarily patched clock, instead
+    of poking ``rm._loss_windows._trade_results`` directly."""
+    real_clock = rm._clock
+    target_ms = real_clock() - age_ms
+    rm._clock = lambda: target_ms
+    try:
+        rm.on_position_closed(symbol, pnl)
+    finally:
+        rm._clock = real_clock
+
+
+def _force_halt(rm: RiskManager, reason: str = "test halt") -> None:
+    """Force RiskManager into a halted state for entry-gate tests.
+
+    No production path sets this directly — halting only happens via a real
+    drawdown breach evaluated inside ``update_equity``. This exists purely to
+    test the halted-entry-gate in isolation without driving a full RED-tier
+    transition through the drawdown tracker.
+    """
+    rm._trading_halted = True
+    rm._halt_reason = reason
+
+
+def _set_current_atr(rm: RiskManager, epic: str, value: float) -> None:
+    """Set the *current* ATR reading under test without feeding it into the
+    rolling average. ``rm.update_atr()`` does both, which would pollute the
+    very baseline the volatility-circuit-breaker tests compare the spike
+    against — this seam is test-only by necessity."""
+    rm._current_atr[epic] = value
 
 
 def _make_fill(
@@ -178,8 +216,7 @@ class TestEntryGates:
 
     def test_rejected_when_trading_halted(self):
         rm = _make_rm()
-        rm._trading_halted = True
-        rm._halt_reason = "test halt"
+        _force_halt(rm)
         decision = rm.evaluate_ig_order(_make_ig_order(), margin_used=0.0, equity_gbp=10_000.0)
         assert not decision.approved
         assert decision.risk_level == RiskLevel.HALTED
@@ -188,7 +225,7 @@ class TestEntryGates:
     def test_rejected_on_daily_loss_limit(self):
         rm = _make_rm()
         # Inject a losing trade inside the daily window
-        rm._loss_windows._trade_results.append((_NOW_MS - 1000, -300.1))  # -3.001% of 10000
+        _record_loss(rm, "SYM", -300.1, age_ms=1000)  # -3.001% of 10000
         decision = rm.evaluate_ig_order(_make_ig_order(), margin_used=0.0, equity_gbp=10_000.0)
         assert not decision.approved
         assert "daily" in decision.reason.lower()
@@ -197,8 +234,7 @@ class TestEntryGates:
         _DAY_MS = 24 * 3600 * 1000
         rm = _make_rm()
         # Loss within last 7 days but beyond 24h — daily limit NOT triggered
-        two_days_ago = _NOW_MS - 2 * _DAY_MS
-        rm._loss_windows._trade_results.append((two_days_ago, -500.1))  # -5.001% weekly
+        _record_loss(rm, "SYM", -500.1, age_ms=2 * _DAY_MS)  # -5.001% weekly
         decision = rm.evaluate_ig_order(_make_ig_order(), margin_used=0.0, equity_gbp=10_000.0)
         assert not decision.approved
         assert "weekly" in decision.reason.lower()
@@ -207,8 +243,7 @@ class TestEntryGates:
         _DAY_MS = 24 * 3600 * 1000
         rm = _make_rm()
         # Loss 10 days ago — beyond weekly (7d) but within monthly (30d)
-        ten_days_ago = _NOW_MS - 10 * _DAY_MS
-        rm._loss_windows._trade_results.append((ten_days_ago, -1000.1))  # -10.001% monthly
+        _record_loss(rm, "SYM", -1000.1, age_ms=10 * _DAY_MS)  # -10.001% monthly
         decision = rm.evaluate_ig_order(_make_ig_order(), margin_used=0.0, equity_gbp=10_000.0)
         assert not decision.approved
         assert "monthly" in decision.reason.lower()
@@ -329,16 +364,16 @@ class TestDrawdownTracking:
     def test_peak_equity_never_moves_down(self):
         rm = _make_rm()
         rm.update_equity(10_000.0)
-        assert rm._drawdown.peak_equity == 10_000.0
+        assert rm.peak_equity == 10_000.0
 
         rm.update_equity(9_000.0)
-        assert rm._drawdown.peak_equity == 10_000.0  # peak unchanged
+        assert rm.peak_equity == 10_000.0  # peak unchanged
 
         rm.update_equity(11_000.0)
-        assert rm._drawdown.peak_equity == 11_000.0  # peak updated
+        assert rm.peak_equity == 11_000.0  # peak updated
 
         rm.update_equity(9_000.0)
-        assert rm._drawdown.peak_equity == 11_000.0  # peak unchanged again
+        assert rm.peak_equity == 11_000.0  # peak unchanged again
 
     def test_red_single_read_does_not_halt(self):
         # Debounce: one transient RED read must NOT halt (the 2026-06-05 bug).
@@ -346,16 +381,15 @@ class TestDrawdownTracking:
         rm.update_equity(10_000.0)
         rm.update_equity(8_400.0)  # 16% RED — read 1 of 3
         assert rm._consecutive_red == 1
-        assert rm._trading_halted is False
+        assert rm.is_trading_halted is False
 
     def test_red_halts_after_confirm_count(self):
         rm = _make_rm()  # confirm_count=3
         rm.update_equity(10_000.0)
         rm.update_equity(8_400.0)
         rm.update_equity(8_400.0)
-        assert rm._trading_halted is False  # still only 2 reads
+        assert rm.is_trading_halted is False  # still only 2 reads
         rm.update_equity(8_400.0)  # 3rd consecutive RED → halt
-        assert rm._trading_halted is True
         assert rm.is_trading_halted is True
 
     def test_red_debounce_resets_on_recovery(self):
@@ -365,26 +399,25 @@ class TestDrawdownTracking:
         rm.update_equity(8_400.0)  # RED read 2
         rm.update_equity(9_400.0)  # recovered to YELLOW → counter resets
         assert rm._consecutive_red == 0
-        assert rm._trading_halted is False
+        assert rm.is_trading_halted is False
 
     def test_red_halt_auto_clears_on_recovery(self):
         rm = _make_rm(RiskConfig(drawdown_red_confirm_count=1))
         rm.update_equity(10_000.0)
         rm.update_equity(8_400.0)  # RED (confirm=1) → halted
-        assert rm._trading_halted is True
+        assert rm.is_trading_halted is True
         rm.update_equity(9_400.0)  # recover to YELLOW → auto-clear
-        assert rm._trading_halted is False
+        assert rm.is_trading_halted is False
         assert rm._halt_reason == ""
 
     def test_maintenance_guard_freezes_breaker(self):
         # During the blackout window a RED-looking equity must neither halt nor
         # pollute the peak — the update is skipped entirely.
-        rm = _make_rm(RiskConfig(drawdown_red_confirm_count=1))
-        rm._in_blackout_fn = lambda: True
+        rm = _make_rm(RiskConfig(drawdown_red_confirm_count=1), in_blackout_fn=lambda: True)
         rm.update_equity(10_000.0)  # frozen — not tracked
         rm.update_equity(8_400.0)  # would be RED but guarded
-        assert rm._trading_halted is False
-        assert rm._drawdown.peak_equity == 0.0  # nothing tracked during blackout
+        assert rm.is_trading_halted is False
+        assert rm.peak_equity == 0.0  # nothing tracked during blackout
 
     def test_trading_halt_survives_restart(self):
         rm = _make_rm(RiskConfig(drawdown_red_confirm_count=1))
@@ -435,7 +468,7 @@ class TestDrawdownTracking:
         asyncio.run(_run())
 
         assert shutdowns == []
-        assert rm._trading_halted is True
+        assert rm.is_trading_halted is True
         assert any(getattr(a, "event_type", "") == "drawdown_red_halt" for a in alerts)
 
 
@@ -447,7 +480,7 @@ class TestDrawdownTracking:
 class TestLossWindowTracking:
     def test_pnl_24h_accumulates_correctly(self):
         rm = _make_rm()
-        rm._drawdown._equity = 10_000.0
+        rm.update_equity(10_000.0)
         rm.on_position_closed("BTC/USDT", -100.0)
         rm.on_position_closed("ETH/USDT", -50.0)
         _DAY_MS = 24 * 3600 * 1000
@@ -458,9 +491,9 @@ class TestLossWindowTracking:
         _DAY_MS = 24 * 3600 * 1000
         rm = _make_rm()
         # Trade from 25 hours ago — outside daily window
-        rm._loss_windows._trade_results.append((_NOW_MS - 25 * 3600 * 1000, -999.0))
+        _record_loss(rm, "SYM", -999.0, age_ms=25 * 3600 * 1000)
         # Trade from 1 hour ago — inside window
-        rm._loss_windows._trade_results.append((_NOW_MS - 1 * 3600 * 1000, -50.0))
+        _record_loss(rm, "SYM", -50.0, age_ms=1 * 3600 * 1000)
         total = rm._window_pnl(_NOW_MS, _DAY_MS)
         assert total == pytest.approx(-50.0)
 
@@ -468,8 +501,8 @@ class TestLossWindowTracking:
         _DAY_MS = 24 * 3600 * 1000
         _WEEK_MS = 7 * _DAY_MS
         rm = _make_rm()
-        rm._loss_windows._trade_results.append((_NOW_MS - 2 * _DAY_MS, -100.0))  # within week
-        rm._loss_windows._trade_results.append((_NOW_MS - 8 * _DAY_MS, -999.0))  # outside week
+        _record_loss(rm, "SYM", -100.0, age_ms=2 * _DAY_MS)  # within week
+        _record_loss(rm, "SYM", -999.0, age_ms=8 * _DAY_MS)  # outside week
         total = rm._window_pnl(_NOW_MS, _WEEK_MS)
         assert total == pytest.approx(-100.0)
 
@@ -477,14 +510,14 @@ class TestLossWindowTracking:
         _DAY_MS = 24 * 3600 * 1000
         _MONTH_MS = 30 * _DAY_MS
         rm = _make_rm()
-        rm._loss_windows._trade_results.append((_NOW_MS - 15 * _DAY_MS, -200.0))  # within month
-        rm._loss_windows._trade_results.append((_NOW_MS - 31 * _DAY_MS, -999.0))  # outside month
+        _record_loss(rm, "SYM", -200.0, age_ms=15 * _DAY_MS)  # within month
+        _record_loss(rm, "SYM", -999.0, age_ms=31 * _DAY_MS)  # outside month
         total = rm._window_pnl(_NOW_MS, _MONTH_MS)
         assert total == pytest.approx(-200.0)
 
     def test_consecutive_losses_reset_on_win(self):
         rm = _make_rm()
-        rm._drawdown._equity = 10_000.0
+        rm.update_equity(10_000.0)
         rm.on_position_closed("BTC/USDT", -100.0)
         rm.on_position_closed("BTC/USDT", -100.0)
         rm.on_position_closed("BTC/USDT", -100.0)
@@ -495,7 +528,7 @@ class TestLossWindowTracking:
 
     def test_consecutive_losses_increment_per_loss(self):
         rm = _make_rm()
-        rm._drawdown._equity = 10_000.0
+        rm.update_equity(10_000.0)
         for _ in range(5):
             rm.on_position_closed("BTC/USDT", -10.0)
         assert rm._loss_windows.consecutive_losses == 5
@@ -515,7 +548,7 @@ class TestVolatilityCircuitBreaker:
         rm = _make_rm()
         for _ in range(20):
             rm.update_atr(self._EPIC, 100.0)
-        rm._current_atr[self._EPIC] = 201.0  # just above 2× average
+        _set_current_atr(rm, self._EPIC, 201.0)  # just above 2× average
 
         order = _make_ig_order(epic=self._EPIC)
         decision = rm.evaluate_ig_order(order, margin_used=0.0, equity_gbp=10_000.0)
@@ -526,7 +559,7 @@ class TestVolatilityCircuitBreaker:
         rm = _make_rm()
         for _ in range(20):
             rm.update_atr(self._EPIC, 100.0)
-        rm._current_atr[self._EPIC] = 180.0  # below 2× average
+        _set_current_atr(rm, self._EPIC, 180.0)  # below 2× average
 
         order = _make_ig_order(epic=self._EPIC)
         decision = rm.evaluate_ig_order(order, margin_used=0.0, equity_gbp=10_000.0)
@@ -536,7 +569,7 @@ class TestVolatilityCircuitBreaker:
         """With only one ATR value, circuit breaker should not fire."""
         rm = _make_rm()
         rm.update_atr(self._EPIC, 100.0)  # single data point
-        rm._current_atr[self._EPIC] = 500.0
+        _set_current_atr(rm, self._EPIC, 500.0)
 
         order = _make_ig_order(epic=self._EPIC)
         decision = rm.evaluate_ig_order(order, margin_used=0.0, equity_gbp=10_000.0)
@@ -552,7 +585,7 @@ class TestVolatilityCircuitBreaker:
             rm.update_atr(self._EPIC, 1000.0)  # establish high average
         for _ in range(5):
             rm.update_atr(self._EPIC, 10.0)  # replace with low values → avg=10
-        rm._current_atr[self._EPIC] = 21.0  # 2.1× avg of 10
+        _set_current_atr(rm, self._EPIC, 21.0)  # 2.1× avg of 10
 
         order = _make_ig_order(epic=self._EPIC)
         decision = rm.evaluate_ig_order(order, margin_used=0.0, equity_gbp=10_000.0)
@@ -781,9 +814,9 @@ class TestStatePersistence:
         rm2.update_equity(10_000.0)
         rm2.load_state(state)
 
-        assert rm2._drawdown.peak_equity == pytest.approx(10_000.0)
+        assert rm2.peak_equity == pytest.approx(10_000.0)
         assert rm2._loss_windows.consecutive_losses == 2
-        assert rm2._trading_halted is True
+        assert rm2.is_trading_halted is True
         assert rm2._halt_reason == "test"
         assert len(rm2._loss_windows._trade_results) == 1
         assert "BTC/USDT" in rm2._atr_values
@@ -804,7 +837,7 @@ class TestStatePersistence:
     def test_loss_limits_enforced_after_restart(self):
         rm = _make_rm()
         rm.update_equity(10_000.0)
-        rm._loss_windows._trade_results.append((_NOW_MS - 1000, -300.1))  # daily limit breach
+        _record_loss(rm, "SYM", -300.1, age_ms=1000)  # daily limit breach
 
         state = rm.snapshot_state()
 
@@ -854,7 +887,7 @@ class TestEdgeCases:
 
     def test_multiple_simultaneous_position_closes(self):
         rm = _make_rm()
-        rm._drawdown._equity = 10_000.0
+        rm.update_equity(10_000.0)
         # Add multiple positions then close them
         for sym in ("BTC/USDT", "ETH/USDT", "AVAX/USDT"):
             fill = _make_fill(symbol=sym)
