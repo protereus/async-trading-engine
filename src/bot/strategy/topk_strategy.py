@@ -838,17 +838,9 @@ class TopKStrategy:
         mean_close = float(point_df["close"].iloc[slice_idx])
         mean_return = (mean_close - current_price) / current_price
 
-        if var_closes and cfg.variance_pass_enabled:
-            var_returns = [(c - current_price) / current_price for c in var_closes]
-            std_return = float(np.std(var_returns))
-            if mean_return >= 0:
-                direction_confidence = float(np.mean([r >= 0 for r in var_returns]))
-            else:
-                direction_confidence = float(np.mean([r < 0 for r in var_returns]))
-        else:
-            std_return = 0.0
-            direction_confidence = 1.0 if mean_return >= 0 else 0.0
-            var_closes = []
+        std_return, direction_confidence, var_closes = self._variance_pass_stats(
+            mean_return, current_price, var_closes, cfg.variance_pass_enabled
+        )
 
         direction: Literal["LONG", "SHORT"] = "LONG" if mean_return >= 0 else "SHORT"
         uncertainty = std_return / (abs(mean_return) + 1e-8)
@@ -866,22 +858,12 @@ class TopKStrategy:
             predicted_vol_max=cfg.predicted_vol_max,
             ranking_horizon_bars=effective_horizon,
         )
-        if path_sig is not None:
-            # Use path-derived stop: widen if model's own predicted MAE exceeds variance stop
-            path_stop = max(stop_pct, path_sig.predicted_mae_pct * 1.10)
-            stop_pct = max(path_stop, cfg.min_stop_pct)
-            path_sig.stop_pct = stop_pct
+        stop_pct = self._widen_stop_for_path_signal(stop_pct, path_sig, cfg.min_stop_pct)
 
         # Vol regime filter: path signal must not predict extreme volatility
         vol_ok = path_sig is None or path_sig.predicted_volatility <= cfg.predicted_vol_max
-
-        # Only LONG signals are traded (IG spread bet; no short selling in this bot)
-        tradeable = (
-            direction == "LONG"
-            and mean_return >= cfg.min_predicted_return
-            and direction_confidence >= cfg.min_confidence
-            and uncertainty <= cfg.max_uncertainty
-            and vol_ok
+        tradeable = self._is_tradeable(
+            direction, mean_return, direction_confidence, uncertainty, vol_ok, cfg
         )
 
         logger.info(
@@ -913,6 +895,64 @@ class TopKStrategy:
             var_closes_at_horizons=var_closes_at_horizons,
         )
         return signal, path_sig
+
+    @staticmethod
+    def _variance_pass_stats(
+        mean_return: float,
+        current_price: float,
+        var_closes: list[float],
+        variance_pass_enabled: bool,
+    ) -> tuple[float, float, list[float]]:
+        """``std_return`` / ``direction_confidence`` from Pass-2 variance draws.
+
+        Degrades to a confident point estimate (``std_return=0``, full
+        directional confidence, empty samples) when the variance pass is
+        disabled or produced no draws.
+        """
+        if var_closes and variance_pass_enabled:
+            var_returns = [(c - current_price) / current_price for c in var_closes]
+            std_return = float(np.std(var_returns))
+            if mean_return >= 0:
+                direction_confidence = float(np.mean([r >= 0 for r in var_returns]))
+            else:
+                direction_confidence = float(np.mean([r < 0 for r in var_returns]))
+            return std_return, direction_confidence, var_closes
+        direction_confidence = 1.0 if mean_return >= 0 else 0.0
+        return 0.0, direction_confidence, []
+
+    @staticmethod
+    def _widen_stop_for_path_signal(
+        stop_pct: float, path_sig: KronosPathSignal | None, min_stop_pct: float
+    ) -> float:
+        """Widen the variance-derived stop if the model's own predicted MAE exceeds it.
+
+        Mutates ``path_sig.stop_pct`` in place to match — the caller registers
+        this same object, so the widened stop and the path signal must agree.
+        """
+        if path_sig is None:
+            return stop_pct
+        path_stop = max(stop_pct, path_sig.predicted_mae_pct * 1.10)
+        stop_pct = max(path_stop, min_stop_pct)
+        path_sig.stop_pct = stop_pct
+        return stop_pct
+
+    @staticmethod
+    def _is_tradeable(
+        direction: Literal["LONG", "SHORT"],
+        mean_return: float,
+        direction_confidence: float,
+        uncertainty: float,
+        vol_ok: bool,
+        cfg: TopKConfig,
+    ) -> bool:
+        """Only LONG signals are traded (IG spread bet; no short selling in this bot)."""
+        return (
+            direction == "LONG"
+            and mean_return >= cfg.min_predicted_return
+            and direction_confidence >= cfg.min_confidence
+            and uncertainty <= cfg.max_uncertainty
+            and vol_ok
+        )
 
     def _execute_inference_jobs(
         self, group_jobs: list[_GroupJob]
