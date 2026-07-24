@@ -40,6 +40,7 @@ import orjson
 
 from bot.core.event_bus import EVENT_NEW_CANDLE
 from bot.core.models import Candle
+from bot.core.time_constants import HOUR_MS
 from bot.data.backfill import needs_backfill
 from bot.data.eodhd_symbols import (
     EODHD_UNIVERSE,
@@ -80,9 +81,8 @@ _WS_RECONNECT_MAX_S = 60.0
 # EODHD REST can't serve the bar until the provider finalises it.  Each dropped
 # (symbol, hour) is queued and re-fetched at ~:10 past the hour, retrying until
 # served or expired.
-_HOUR_MS = 3_600_000
 _REPAIR_SLOT_OFFSET_S = 600  # fetch at ~:10 past the hour, once finalised
-_REPAIR_MAX_AGE_MS = 48 * _HOUR_MS  # give up on a bar the provider never serves
+_REPAIR_MAX_AGE_MS = 48 * HOUR_MS  # give up on a bar the provider never serves
 _REPAIR_SEED_LOOKBACK_HOURS = 24  # startup seed scans this window for missing hours
 
 # A connection must stay up at least this long to count as "stable" and earn a
@@ -342,14 +342,14 @@ class EODHDFeed:
             expected = last_expected_closed_bar_ms(sym.bot_key)
             if expected is None:
                 continue
-            start = expected - (_REPAIR_SEED_LOOKBACK_HOURS - 1) * _HOUR_MS
+            start = expected - (_REPAIR_SEED_LOOKBACK_HOURS - 1) * HOUR_MS
             have = {
                 c.timestamp
                 for c in self._store.get_candles(sym.bot_key, limit=_REPAIR_SEED_LOOKBACK_HOURS + 2)
             }
             missing = {
                 hour
-                for hour in range(start, expected + 1, _HOUR_MS)
+                for hour in range(start, expected + 1, HOUR_MS)
                 if hour not in have
                 and is_market_open(sym.bot_key, datetime.fromtimestamp(hour / 1000, tz=UTC))
             }

@@ -248,6 +248,16 @@ class BotConfig(BaseSettings):
             raise ValueError(f"bot_env must be 'demo' or 'live', got: {v!r}")
         return v
 
+    def _require_aggregate_to_one(self, reason: str) -> None:
+        """Shared TOPK_AGGREGATE_TO_MINUTES==1 check for feeds that already
+        deliver pre-built 1h bars (no bot-side resampling) — the twelvedata
+        and eodhd branches of validate_config both need this."""
+        if self.topk_aggregate_to_minutes != 1:
+            raise ValueError(
+                f"{reason}; TOPK_AGGREGATE_TO_MINUTES must be 1 (no resampling). "
+                f"Got {self.topk_aggregate_to_minutes}."
+            )
+
     def validate_config(self) -> None:
         """Fail fast at startup if required fields are missing."""
         if self.broker != "ig":
@@ -278,21 +288,15 @@ class BotConfig(BaseSettings):
         elif self.candle_exchange == "twelvedata":
             if not self.twelve_data_api:
                 raise ValueError("candle_exchange='twelvedata' requires TWELVE_DATA_API to be set")
-            if self.topk_aggregate_to_minutes != 1:
-                raise ValueError(
-                    "candle_exchange='twelvedata' delivers pre-built 1h bars; "
-                    "TOPK_AGGREGATE_TO_MINUTES must be 1 (no resampling). "
-                    f"Got {self.topk_aggregate_to_minutes}."
-                )
+            self._require_aggregate_to_one(
+                "candle_exchange='twelvedata' delivers pre-built 1h bars"
+            )
         elif self.candle_exchange == "eodhd":
             if not self.eodhd_api:
                 raise ValueError("candle_exchange='eodhd' requires EODHD_API to be set")
-            if self.topk_aggregate_to_minutes != 1:
-                raise ValueError(
-                    "candle_exchange='eodhd' emits 1h bars (intraday backfill + "
-                    "WebSocket aggregation); TOPK_AGGREGATE_TO_MINUTES must be 1. "
-                    f"Got {self.topk_aggregate_to_minutes}."
-                )
+            self._require_aggregate_to_one(
+                "candle_exchange='eodhd' emits 1h bars (intraday backfill + WebSocket aggregation)"
+            )
         else:
             raise ValueError(
                 f"candle_exchange must be 'ig', 'twelvedata', or 'eodhd', "

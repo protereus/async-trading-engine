@@ -32,6 +32,7 @@ from bot.core.models import (
     RiskLevel,
     RiskState,
 )
+from bot.core.time_constants import DAY_MS, HOUR_MS, MONTH_MS, WEEK_MS
 from bot.risk import sizing
 from bot.risk.budgets import RiskBudgetLedger
 from bot.risk.drawdown import DrawdownTracker
@@ -54,12 +55,6 @@ if TYPE_CHECKING:
     from bot.core.event_bus import EventBus
 
 logger = logging.getLogger(__name__)
-
-_DAY_MS = 24 * 3600 * 1000
-_WEEK_MS = 7 * _DAY_MS
-_MONTH_MS = 30 * _DAY_MS
-_HOUR_MS = 3600 * 1000
-
 
 class RiskManager:
     """Evaluates every order request against configurable risk rules.
@@ -216,15 +211,15 @@ class RiskManager:
 
         # 2-4. Loss limits (daily / weekly / monthly windows)
         if equity > 0:
-            daily = self._window_pnl(now_ms, _DAY_MS)
+            daily = self._window_pnl(now_ms, DAY_MS)
             if daily <= -(self._config.daily_loss_limit_pct * equity):
                 return self._reject(orig_size, "Daily loss limit reached", RiskLevel.CRITICAL)
 
-            weekly = self._window_pnl(now_ms, _WEEK_MS)
+            weekly = self._window_pnl(now_ms, WEEK_MS)
             if weekly <= -(self._config.weekly_loss_limit_pct * equity):
                 return self._reject(orig_size, "Weekly loss limit reached", RiskLevel.CRITICAL)
 
-            monthly = self._window_pnl(now_ms, _MONTH_MS)
+            monthly = self._window_pnl(now_ms, MONTH_MS)
             if monthly <= -(self._config.monthly_loss_limit_pct * equity):
                 return self._reject(orig_size, "Monthly loss limit reached", RiskLevel.CRITICAL)
 
@@ -430,7 +425,7 @@ class RiskManager:
                         "pnl": pnl,
                     },
                 )
-            daily = self._window_pnl(now_ms, _DAY_MS)
+            daily = self._window_pnl(now_ms, DAY_MS)
             if daily <= -(self._config.daily_loss_limit_pct * self._drawdown.equity):
                 self._log_risk_event(
                     "daily_limit_hit",
@@ -594,7 +589,7 @@ class RiskManager:
         behaviour, not a bookkeeping glitch.
         """
         now_ms = self._clock()
-        pnl_24h = self._window_pnl(now_ms, _DAY_MS)
+        pnl_24h = self._window_pnl(now_ms, DAY_MS)
         total_exposure = sum(p.quantity * p.entry_price for p in self._open_positions.values())
         equity = self._drawdown.equity
         total_exposure_pct = total_exposure / equity if equity > 0 else 0.0
@@ -705,7 +700,7 @@ class RiskManager:
         self._loss_windows.prune(now_ms)
 
     def _prune_order_history(self, now_ms: int) -> None:
-        cutoff = now_ms - _HOUR_MS
+        cutoff = now_ms - HOUR_MS
         while self._orders_this_hour and self._orders_this_hour[0] < cutoff:
             self._orders_this_hour.popleft()
 

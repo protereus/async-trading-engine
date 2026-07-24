@@ -48,9 +48,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
+from bot.core.time_constants import HOUR_MS  # noqa: E402
 from bot.data.eodhd_symbols import EODHD_UNIVERSE  # noqa: E402
 
-_HOUR_MS = 3_600_000
 # A window of lookback(400) + predict(120) + 1 is the minimum to form ONE
 # training sample; flag symbols below it (and warn on thin history generally).
 _MIN_SAMPLE_BARS = 400 + 120 + 1
@@ -179,7 +179,7 @@ def _export_symbol(
             if prev_ts is not None:
                 if ts <= prev_ts:
                     n_nonmono += 1
-                gap_h = (ts - prev_ts) / _HOUR_MS
+                gap_h = (ts - prev_ts) / HOUR_MS
                 if gap_h > 1.5:
                     gaps_gt_90 += 1
                 if gap_h > _SUSPICIOUS_GAP_H:
@@ -208,7 +208,7 @@ def _export_symbol(
     n = len(rows)
     start = _iso(rows[0][0]) if n else None
     end = _iso(rows[-1][0]) if n else None
-    span_days = (rows[-1][0] - rows[0][0]) / (_HOUR_MS * 24) if n > 1 else 0.0
+    span_days = (rows[-1][0] - rows[0][0]) / (HOUR_MS * 24) if n > 1 else 0.0
     pct_zero_vol = (n_zero_vol / n * 100.0) if n else 0.0
     vol_step = _volume_step_ratio(nonzero_vols)
     enough = n >= _MIN_SAMPLE_BARS

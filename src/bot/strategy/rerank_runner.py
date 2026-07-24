@@ -480,13 +480,10 @@ class RerankRunner:
         _cash_now: float | None = None
         _open_pnl_now: float | None = None
         try:
-            _bal = await ctx.ig_client.fetch_balance()
+            _bal = await ctx.refresh_balance()
             _equity_now = _bal["equity"]
             _cash_now = _bal["balance"]
             _open_pnl_now = _bal["open_pnl"]
-            ctx.risk_manager.update_equity(_equity_now)
-            ctx.state.cash = _cash_now
-            ctx.state.open_pnl = _open_pnl_now
         except Exception:
             logger.debug(
                 "TopK rerank: IG balance fetch failed — alert will omit equity",
@@ -776,17 +773,14 @@ class RerankRunner:
     async def _sync_balance_state(self, symbol: str) -> tuple[float | None, float | None]:
         ctx = self._ctx
         try:
-            balance = await ctx.ig_client.fetch_balance()
-            equity_gbp = balance["equity"]
-            margin_used = balance["margin"]
+            balance = await ctx.refresh_balance()
         except Exception:
             logger.warning("Could not fetch IG balance", exc_info=True)
             return None, None
 
+        equity_gbp = balance["equity"]
+        margin_used = balance["margin"]
         logger.info("TopK balance: %s equity=%.2f margin=%.2f", symbol, equity_gbp, margin_used)
-        ctx.risk_manager.update_equity(equity_gbp)
-        ctx.state.cash = balance["balance"]
-        ctx.state.open_pnl = balance["open_pnl"]
         return equity_gbp, margin_used
 
     def _prepare_entry_order(

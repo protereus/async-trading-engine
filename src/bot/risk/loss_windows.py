@@ -12,9 +12,7 @@ from __future__ import annotations
 
 from collections import deque
 
-_DAY_MS = 24 * 3600 * 1000
-_WEEK_MS = 7 * _DAY_MS
-_MONTH_MS = 30 * _DAY_MS
+from bot.core.time_constants import MONTH_MS
 
 
 class LossWindowTracker:
@@ -47,7 +45,7 @@ class LossWindowTracker:
         self._monthly_pnl += pnl
 
     def _prune(self, now_ms: int) -> None:
-        cutoff = now_ms - _MONTH_MS
+        cutoff = now_ms - MONTH_MS
         while self._trade_results and self._trade_results[0][0] < cutoff:
             self._trade_results.popleft()
 

@@ -154,10 +154,7 @@ class HealthMonitor:
             return
 
         try:
-            _bal = await ctx.ig_client.fetch_balance()
-            ctx.risk_manager.update_equity(_bal["equity"])
-            ctx.state.cash = _bal["balance"]
-            ctx.state.open_pnl = _bal["open_pnl"]
+            await ctx.refresh_balance()
         except Exception:
             logger.debug("Heartbeat: IG balance refresh failed", exc_info=True)
 

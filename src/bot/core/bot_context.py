@@ -138,6 +138,24 @@ class BotContext:
         return self.epic_to_candle.get(epic, epic)
 
     # ------------------------------------------------------------------
+    # Balance refresh
+    # ------------------------------------------------------------------
+
+    async def refresh_balance(self) -> dict[str, Any]:
+        """Fetch IG balance and apply the equity/cash/open_pnl update triplet.
+
+        Raises on fetch failure — callers keep their own try/except so each
+        call site's existing failure-handling granularity (silent continue,
+        return sentinel, debug vs warning log) is preserved rather than
+        collapsed into one behaviour here.
+        """
+        balance: dict[str, Any] = await self.ig_client.fetch_balance()
+        self.risk_manager.update_equity(balance["equity"])
+        self.state.cash = balance["balance"]
+        self.state.open_pnl = balance["open_pnl"]
+        return balance
+
+    # ------------------------------------------------------------------
     # Clock helpers
     # ------------------------------------------------------------------
 

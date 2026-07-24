@@ -23,6 +23,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 from bot.core.models import Candle
+from bot.core.time_constants import HOUR_MS
 
 logger = logging.getLogger(__name__)
 
@@ -44,9 +45,6 @@ logger = logging.getLogger(__name__)
 #   3. ``tests/test_ig_quote_scale.py`` — update the parametrised cases.
 IG_NATIVE_CANDLE_SYMBOLS: frozenset[str] = frozenset({"XAU/USD", "XAG/USD"})
 
-# Hour length in milliseconds — kept as a named constant so the partial-
-# hour-drop heuristic ("first tick within minute 0") is grep-able.
-_HOUR_MS = 3_600_000
 _MINUTE_MS = 60_000
 
 # Callback signature: takes the finalised candle, returns nothing.
@@ -141,7 +139,7 @@ class IGCandleAggregator:
         if utm_ms <= 0 or mid <= 0:
             return
 
-        hour_start = (utm_ms // _HOUR_MS) * _HOUR_MS
+        hour_start = (utm_ms // HOUR_MS) * HOUR_MS
         bucket = self._buckets.get(symbol)
 
         # Reject ticks pointing at a strictly earlier hour than the current

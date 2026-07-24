@@ -110,6 +110,15 @@ class Lifecycle:
 
             ctx.risk_manager.set_trailing_stop_lookup(_trail_lookup)
 
+    def _construct_feed(self, feed_cls: type[Any], **extra_kwargs: Any) -> Any:
+        """Shared (store, event_bus, config, candle_db) construction shape
+        for the twelvedata/eodhd feeds in build_feed_task — 'ig' is excluded
+        since it's built earlier in init_ig, not here."""
+        ctx = self._ctx
+        return feed_cls(
+            ctx.store, ctx.event_bus, ctx.config, candle_db=ctx.candle_db, **extra_kwargs
+        )
+
     def build_feed_task(self) -> asyncio.Task[None]:
         """Instantiate the appropriate data feed and schedule it as an asyncio Task."""
         ctx = self._ctx
@@ -118,23 +127,12 @@ class Lifecycle:
         if ctx.config.candle_exchange == "twelvedata":
             from bot.data.twelve_data_feed import TwelveDataFeed
 
-            ctx.twelve_data_feed = TwelveDataFeed(
-                ctx.store,
-                ctx.event_bus,
-                ctx.config,
-                candle_db=ctx.candle_db,
-            )
+            ctx.twelve_data_feed = self._construct_feed(TwelveDataFeed)
             return asyncio.create_task(ctx.twelve_data_feed.run(), name="twelve_data_feed")
         if ctx.config.candle_exchange == "eodhd":
             from bot.data.eodhd_feed import EODHDFeed
 
-            ctx.eodhd_feed = EODHDFeed(
-                ctx.store,
-                ctx.event_bus,
-                ctx.config,
-                candle_db=ctx.candle_db,
-                spread_monitor=ctx.spread_monitor,
-            )
+            ctx.eodhd_feed = self._construct_feed(EODHDFeed, spread_monitor=ctx.spread_monitor)
             return asyncio.create_task(ctx.eodhd_feed.run(), name="eodhd_feed")
         raise ValueError(
             f"Unsupported candle_exchange={ctx.config.candle_exchange!r}; "
@@ -267,10 +265,7 @@ class Lifecycle:
         the first candle)."""
         ctx = self._ctx
         try:
-            balance = await ctx.ig_client.fetch_balance()
-            ctx.risk_manager.update_equity(balance["equity"])
-            ctx.state.cash = balance["balance"]
-            ctx.state.open_pnl = balance["open_pnl"]
+            balance = await ctx.refresh_balance()
             logger.info(
                 "IG startup balance: equity=%.2f cash=%.2f open_pnl=%+.2f margin=%.2f",
                 balance["equity"],
