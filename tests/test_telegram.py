@@ -277,7 +277,7 @@ class TestMessageFormatting:
             return True
 
         alerter.send = _fake_send  # type: ignore[method-assign]
-        await alerter.alert_take_profit(
+        await alerter.send_take_profit_alert(
             symbol="USD/SEK",
             reason="signal_decay_mean_flip",
             entry_price=9347.82,

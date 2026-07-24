@@ -1,7 +1,7 @@
 """End-to-end integration tests for ``TradingBot``.
 
 These tests construct a real ``TradingBot`` (broker=ig, candle_exchange=twelvedata,
-topk_enabled=True) and drive its hot paths — ``_process_candle_ig_topk``,
+topk_enabled=True) and drive its hot paths — ``_check_exit_and_entry``,
 ``_topk_rerank_loop``, ``_handle_order_filled``, ``_close_position``, and the
 startup state-restoration block in ``start()`` — with the IG REST client and the
 Kronos predictor stubbed out.  No real network calls, no GPU inference, no
@@ -263,7 +263,7 @@ def bot(monkeypatch: pytest.MonkeyPatch, tmp_path: Any) -> Iterator[TradingBot]:
     bot.ctx.alerter = AsyncMock()
     bot.ctx.alerter.send_topk_rerank = AsyncMock(return_value=True)
     bot.ctx.alerter.send_trade_alert = AsyncMock(return_value=True)
-    bot.ctx.alerter.alert_take_profit = AsyncMock(return_value=True)
+    bot.ctx.alerter.send_take_profit_alert = AsyncMock(return_value=True)
     bot.ctx.alerter.send_startup = AsyncMock(return_value=True)
     bot.ctx.alerter.send_shutdown = AsyncMock(return_value=True)
     bot.ctx.alerter.send_risk_alert = AsyncMock(return_value=True)
@@ -307,7 +307,7 @@ def bot_with_topk(bot: TradingBot) -> TradingBot:
 
 
 class TestStopLossAcrossAssetClasses:
-    """``_process_candle_ig_topk`` must compare entry (IG level) and current
+    """``_check_exit_and_entry`` must compare entry (IG level) and current
     (Twelve Data face value) in matching units.  These tests catch the regression
     that closed every ETF position on the first candle."""
 
@@ -315,7 +315,7 @@ class TestStopLossAcrossAssetClasses:
     async def test_metal_xau_at_entry_does_not_close(self, bot_with_topk: TradingBot) -> None:
         # XAU entry and current at the same level → no loss.
         pos = bot_with_topk.ctx.state.positions["XAU/USD"]
-        await bot_with_topk.ctx.runner.process_candle_ig_topk("XAU/USD", 13.95, pos)
+        await bot_with_topk.ctx.runner.check_exit_and_entry("XAU/USD", 13.95, pos)
         bot_with_topk.ctx.ig_client.close_position.assert_not_called()
 
     @pytest.mark.asyncio
@@ -324,7 +324,7 @@ class TestStopLossAcrossAssetClasses:
     ) -> None:
         # 0.4% real loss; stop is 1%
         pos = bot_with_topk.ctx.state.positions["XAU/USD"]
-        await bot_with_topk.ctx.runner.process_candle_ig_topk("XAU/USD", 13.894, pos)
+        await bot_with_topk.ctx.runner.check_exit_and_entry("XAU/USD", 13.894, pos)
         bot_with_topk.ctx.ig_client.close_position.assert_not_called()
 
     @pytest.mark.asyncio
@@ -336,7 +336,7 @@ class TestStopLossAcrossAssetClasses:
             )
         )
         pos = bot_with_topk.ctx.state.positions["XAU/USD"]
-        await bot_with_topk.ctx.runner.process_candle_ig_topk("XAU/USD", 13.671, pos)
+        await bot_with_topk.ctx.runner.check_exit_and_entry("XAU/USD", 13.671, pos)
         bot_with_topk.ctx.ig_client.close_position.assert_awaited_once()
         # Stop-loss path also deregisters from TP manager so a stale state
         # doesn't survive into the next entry.
@@ -358,7 +358,7 @@ class TestStopLossAcrossAssetClasses:
         bot.ctx.ig_deal_ids[symbol] = f"DEAL_{symbol}"
         bot.ctx.topk_signals = [_make_signal(symbol, stop_pct=0.01)]
         bot.ctx.topk_scanned = True
-        await bot.ctx.runner.process_candle_ig_topk(
+        await bot.ctx.runner.check_exit_and_entry(
             symbol, current_td, bot.ctx.state.positions[symbol]
         )
         bot.ctx.ig_client.close_position.assert_not_called()
@@ -366,7 +366,7 @@ class TestStopLossAcrossAssetClasses:
     @pytest.mark.asyncio
     async def test_jpy_at_entry_does_not_close(self, bot_with_topk: TradingBot) -> None:
         pos = bot_with_topk.ctx.state.positions["USD/JPY"]
-        await bot_with_topk.ctx.runner.process_candle_ig_topk("USD/JPY", 156.585, pos)
+        await bot_with_topk.ctx.runner.check_exit_and_entry("USD/JPY", 156.585, pos)
         bot_with_topk.ctx.ig_client.close_position.assert_not_called()
 
     @pytest.mark.asyncio
@@ -378,7 +378,7 @@ class TestStopLossAcrossAssetClasses:
         )
         # 1.5% real loss exceeds 1% stop
         pos = bot_with_topk.ctx.state.positions["USD/JPY"]
-        await bot_with_topk.ctx.runner.process_candle_ig_topk("USD/JPY", 154.242, pos)
+        await bot_with_topk.ctx.runner.check_exit_and_entry("USD/JPY", 154.242, pos)
         bot_with_topk.ctx.ig_client.close_position.assert_awaited_once()
 
     @pytest.mark.asyncio
@@ -392,7 +392,7 @@ class TestStopLossAcrossAssetClasses:
         bot.ctx.ig_deal_ids["EUR/USD"] = "DEAL_EU"
         bot.ctx.topk_signals = [_make_signal("EUR/USD", stop_pct=0.005)]
         bot.ctx.topk_scanned = True
-        await bot.ctx.runner.process_candle_ig_topk(
+        await bot.ctx.runner.check_exit_and_entry(
             "EUR/USD", 1.17225, bot.ctx.state.positions["EUR/USD"]
         )
         bot.ctx.ig_client.close_position.assert_not_called()
@@ -404,7 +404,7 @@ class TestStopLossAcrossAssetClasses:
         bot.ctx.ig_deal_ids["XAU/USD"] = "DEAL_XAU"
         bot.ctx.topk_signals = [_make_signal("XAU/USD", stop_pct=0.01)]
         bot.ctx.topk_scanned = True
-        await bot.ctx.runner.process_candle_ig_topk(
+        await bot.ctx.runner.check_exit_and_entry(
             "XAU/USD", 4616.52, bot.ctx.state.positions["XAU/USD"]
         )
         bot.ctx.ig_client.close_position.assert_not_called()
@@ -422,7 +422,7 @@ class TestStopLossAcrossAssetClasses:
             )
         )
         # 0.83% loss, exceeds the 0.5% fallback floor
-        await bot.ctx.runner.process_candle_ig_topk(
+        await bot.ctx.runner.check_exit_and_entry(
             "EUR/USD", 1.190, bot.ctx.state.positions["EUR/USD"]
         )
         bot.ctx.ig_client.close_position.assert_awaited_once()
@@ -457,7 +457,7 @@ class TestStopLossAcrossAssetClasses:
         )
 
         # 0.83% loss > 0.5% stop → triggers the close attempt
-        await bot.ctx.runner.process_candle_ig_topk(
+        await bot.ctx.runner.check_exit_and_entry(
             "EUR/USD", 1.190, bot.ctx.state.positions["EUR/USD"]
         )
 
@@ -470,7 +470,7 @@ class TestStopLossAcrossAssetClasses:
 
 
 # ---------------------------------------------------------------------------
-# B. Entry path through _process_candle_ig_topk
+# B. Entry path through _check_exit_and_entry
 # ---------------------------------------------------------------------------
 
 
@@ -478,14 +478,14 @@ class TestEntryPath:
     @pytest.mark.asyncio
     async def test_entry_skipped_when_not_scanned(self, bot: TradingBot) -> None:
         bot.ctx.topk_scanned = False
-        await bot.ctx.runner.process_candle_ig_topk("EUR/USD", 1.10, None)
+        await bot.ctx.runner.check_exit_and_entry("EUR/USD", 1.10, None)
         bot.ctx.ig_client.place_order.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_entry_skipped_when_not_in_topk(self, bot: TradingBot) -> None:
         bot.ctx.topk_scanned = True
         bot.ctx.topk_selected = ["GBP/USD"]
-        await bot.ctx.runner.process_candle_ig_topk("EUR/USD", 1.10, None)
+        await bot.ctx.runner.check_exit_and_entry("EUR/USD", 1.10, None)
         bot.ctx.ig_client.place_order.assert_not_called()
 
     @pytest.mark.asyncio
@@ -496,7 +496,7 @@ class TestEntryPath:
         bot.ctx.topk_scanned = True
         bot.ctx.topk_selected = ["EUR/USD"]
         bot.ctx.topk_signals = [_make_signal("EUR/USD", stop_pct=0.005)]
-        await bot.ctx.runner.process_candle_ig_topk("EUR/USD", 1.10, None)
+        await bot.ctx.runner.check_exit_and_entry("EUR/USD", 1.10, None)
         bot.ctx.ig_client.place_order.assert_not_called()
 
     @pytest.mark.asyncio
@@ -529,7 +529,7 @@ class TestEntryPath:
             )
         )
 
-        await bot.ctx.runner.process_candle_ig_topk("EUR/USD", 1.10, None)
+        await bot.ctx.runner.check_exit_and_entry("EUR/USD", 1.10, None)
 
         bot.ctx.ig_client.place_order.assert_awaited_once()
         order_arg = bot.ctx.ig_client.place_order.call_args.args[0]
@@ -568,7 +568,7 @@ class TestEntryPath:
             )
         )
 
-        await bot.ctx.runner.process_candle_ig_topk("EUR/USD", 1.10, None)
+        await bot.ctx.runner.check_exit_and_entry("EUR/USD", 1.10, None)
 
         tp_state = bot.ctx.tp_manager._positions["EUR/USD"]
         assert tp_state.predicted_mfe_pct == pytest.approx(0.03)
@@ -581,7 +581,7 @@ class TestEntryPath:
     ) -> None:
         """RED drawdown tier → risk manager rejects, no order placed.
 
-        ``_process_candle_ig_topk`` calls ``update_equity`` before evaluating
+        ``_check_exit_and_entry`` calls ``update_equity`` before evaluating
         the order, which recomputes the tier from peak vs current.  Use a
         peak well above current so the tier stays RED through the recompute.
         """
@@ -593,7 +593,7 @@ class TestEntryPath:
         bot.ctx.risk_manager._drawdown.set_peak_equity(20_000.0)
         bot.ctx.risk_manager._drawdown._equity = 10_000.0  # direct write bypasses tier callback
 
-        await bot.ctx.runner.process_candle_ig_topk("EUR/USD", 1.10, None)
+        await bot.ctx.runner.check_exit_and_entry("EUR/USD", 1.10, None)
 
         bot.ctx.ig_client.place_order.assert_not_called()
 
@@ -618,7 +618,7 @@ class TestEntryPath:
         )
         bot.ctx.ig_client.confirm_order = AsyncMock(side_effect=RuntimeError("IG rejected"))
 
-        await bot.ctx.runner.process_candle_ig_topk("EUR/USD", 1.10, None)
+        await bot.ctx.runner.check_exit_and_entry("EUR/USD", 1.10, None)
 
         assert "EUR/USD" not in bot.ctx.ig_deal_ids
         assert "EUR/USD" not in bot.ctx.tp_manager._positions
@@ -640,7 +640,7 @@ class TestEntryPath:
         bot.ctx.topk_selected = ["EUR/USD"]
         bot.ctx.topk_signals = [_make_signal("EUR/USD", stop_pct=0.005)]
 
-        await bot.ctx.runner.process_candle_ig_topk("EUR/USD", 1.10, None)
+        await bot.ctx.runner.check_exit_and_entry("EUR/USD", 1.10, None)
 
         bot.ctx.ig_client.place_order.assert_not_called()
 
@@ -681,7 +681,7 @@ class TestEntryPath:
             ]
         )
 
-        await bot.ctx.runner.process_candle_ig_topk("EUR/USD", 1.10, None)
+        await bot.ctx.runner.check_exit_and_entry("EUR/USD", 1.10, None)
 
         assert bot.ctx.ig_client.place_order.await_count == 2
         assert bot.ctx.ig_client.place_order.call_args_list[0].args[0].size == pytest.approx(0.28)
@@ -721,7 +721,7 @@ class TestEntryPath:
             )
         )
 
-        await bot.ctx.runner.process_candle_ig_topk("EUR/USD", 1.10, None)
+        await bot.ctx.runner.check_exit_and_entry("EUR/USD", 1.10, None)
 
         # Placed once, no retry (0.3 is already on the grid), no phantom state.
         assert bot.ctx.ig_client.place_order.await_count == 1
@@ -755,7 +755,7 @@ def test_snap_size_up_to_grid(size: float, min_deal: float | None, expected: flo
 
 
 class TestTakeProfitPerCandle:
-    """Drives ``_process_candle_ig_topk`` with an open position and verifies
+    """Drives ``_check_exit_and_entry`` with an open position and verifies
     that the TP manager's verdict fires the unified close path."""
 
     def _arm(
@@ -794,13 +794,13 @@ class TestTakeProfitPerCandle:
         )
 
         # Walk price up to 2.7 % (above 2.55 % static-TP target)
-        await bot.ctx.runner.process_candle_ig_topk(
+        await bot.ctx.runner.check_exit_and_entry(
             "EUR/USD", 1.130, bot.ctx.state.positions["EUR/USD"]
         )
         bot.ctx.ig_client.close_position.assert_awaited_once()
-        # alert_take_profit should fire with reason=static_take_profit
-        cast(AsyncMock, bot.ctx.alerter).alert_take_profit.assert_awaited()
-        args = cast(AsyncMock, bot.ctx.alerter).alert_take_profit.call_args
+        # send_take_profit_alert should fire with reason=static_take_profit
+        cast(AsyncMock, bot.ctx.alerter).send_take_profit_alert.assert_awaited()
+        args = cast(AsyncMock, bot.ctx.alerter).send_take_profit_alert.call_args
         assert args.args[1] == ExitReason.STATIC_TP.value
 
     @pytest.mark.asyncio
@@ -814,7 +814,7 @@ class TestTakeProfitPerCandle:
         """
         self._arm(bot, "EUR/USD", 1.10)  # entry IG 1.10, stop 1 %, no path → fallback TP
         # Step 1: walk to 1.2 % gain → arms breakeven, below static-TP target
-        await bot.ctx.runner.process_candle_ig_topk(
+        await bot.ctx.runner.check_exit_and_entry(
             "EUR/USD", 1.1132, bot.ctx.state.positions["EUR/USD"]
         )
         st = bot.ctx.tp_manager._positions["EUR/USD"]
@@ -832,13 +832,13 @@ class TestTakeProfitPerCandle:
                 symbol="CS.D.EURUSD.TODAY.IP", side=OrderSide.SELL, average_price=1.099
             )
         )
-        await bot.ctx.runner.process_candle_ig_topk(
+        await bot.ctx.runner.check_exit_and_entry(
             "EUR/USD", 1.099, bot.ctx.state.positions["EUR/USD"]
         )
         bot.ctx.ig_client.close_position.assert_awaited_once()
         # Reason = TRAILING_STOP_BREAKEVEN (Stage 2 was never armed)
         assert (
-            cast(AsyncMock, bot.ctx.alerter).alert_take_profit.call_args.args[1]
+            cast(AsyncMock, bot.ctx.alerter).send_take_profit_alert.call_args.args[1]
             == ExitReason.TRAILING_STOP_BREAKEVEN.value
         )
 
@@ -856,7 +856,7 @@ class TestTakeProfitPerCandle:
         self._arm(bot, "EUR/USD", 1.10)
         # Step 1: walk to +2.5 % → arms ratchet (peak 1.1275)
         peak = 1.1275
-        await bot.ctx.runner.process_candle_ig_topk(
+        await bot.ctx.runner.check_exit_and_entry(
             "EUR/USD", peak, bot.ctx.state.positions["EUR/USD"]
         )
         st = bot.ctx.tp_manager._positions["EUR/USD"]
@@ -871,13 +871,13 @@ class TestTakeProfitPerCandle:
                 symbol="CS.D.EURUSD.TODAY.IP", side=OrderSide.SELL, average_price=1.118
             )
         )
-        await bot.ctx.runner.process_candle_ig_topk(
+        await bot.ctx.runner.check_exit_and_entry(
             "EUR/USD", 1.118, bot.ctx.state.positions["EUR/USD"]
         )
         bot.ctx.ig_client.close_position.assert_awaited_once()
         # Reason = TRAILING_STOP_RATCHET
         assert (
-            cast(AsyncMock, bot.ctx.alerter).alert_take_profit.call_args.args[1]
+            cast(AsyncMock, bot.ctx.alerter).send_take_profit_alert.call_args.args[1]
             == ExitReason.TRAILING_STOP_RATCHET.value
         )
 
@@ -1126,9 +1126,10 @@ class TestRerankLoop:
 
         bot.ctx.ig_client.close_position.assert_awaited_once()
         alerter = cast(AsyncMock, bot.ctx.alerter)
-        alerter.alert_take_profit.assert_awaited()
+        alerter.send_take_profit_alert.assert_awaited()
         # The exit reason should be the signal-decay flip
-        assert alerter.alert_take_profit.call_args.args[1] == ExitReason.SIGNAL_DECAY_FLIP.value
+        call_args = alerter.send_take_profit_alert.call_args
+        assert call_args.args[1] == ExitReason.SIGNAL_DECAY_FLIP.value
 
     @pytest.mark.asyncio
     async def test_topk_state_updated_after_rerank(
@@ -1446,7 +1447,7 @@ class TestClosePosition:
         await bot.ctx.closer.request_close("XAU/USD", "static_take_profit", "test")
 
         bot.ctx.ig_client.close_position.assert_awaited_once()
-        kwargs_pnl = cast(AsyncMock, bot.ctx.alerter).alert_take_profit.call_args
+        kwargs_pnl = cast(AsyncMock, bot.ctx.alerter).send_take_profit_alert.call_args
         # Args (positional): symbol, reason, entry_display, exit_display, pnl_pct, reasoning
         entry_display = kwargs_pnl.args[2]
         exit_display = kwargs_pnl.args[3]
@@ -1472,7 +1473,7 @@ class TestClosePosition:
 
         await bot.ctx.closer.request_close("USD/JPY", "trailing_ratchet", "test")
 
-        kwargs_pnl = cast(AsyncMock, bot.ctx.alerter).alert_take_profit.call_args
+        kwargs_pnl = cast(AsyncMock, bot.ctx.alerter).send_take_profit_alert.call_args
         entry_display = kwargs_pnl.args[2]
         exit_display = kwargs_pnl.args[3]
         pnl_pct = kwargs_pnl.args[4]
@@ -1486,7 +1487,7 @@ class TestClosePosition:
         """No position for symbol → close_position returns silently."""
         await bot.ctx.closer.request_close("EUR/USD", "static_take_profit", "")
         bot.ctx.ig_client.close_position.assert_not_called()
-        cast(AsyncMock, bot.ctx.alerter).alert_take_profit.assert_not_called()
+        cast(AsyncMock, bot.ctx.alerter).send_take_profit_alert.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_close_deregisters_from_tp_manager(self, bot: TradingBot) -> None:
@@ -1514,7 +1515,7 @@ class TestClosePosition:
         """Regression for the production bug found 2026-05-03:
         when IG rejects the close (e.g. ``MARKET_CLOSED_WITH_EDITS``), the TP
         manager state and ``_ig_deal_ids`` must be preserved so the next
-        rerank/candle can retry, and the false-positive ``alert_take_profit``
+        rerank/candle can retry, and the false-positive ``send_take_profit_alert``
         Telegram must NOT fire.  An error alert is sent in its place.
         """
         bot.ctx.state.positions["EUR/USD"] = _make_position("EUR/USD", 1.10)
@@ -1544,7 +1545,7 @@ class TestClosePosition:
         assert bot.ctx.ig_deal_ids["EUR/USD"] == "DEAL_FAIL"
         assert "EUR/USD" in bot.ctx.state.positions
         # No false take-profit alert
-        cast(AsyncMock, bot.ctx.alerter).alert_take_profit.assert_not_called()
+        cast(AsyncMock, bot.ctx.alerter).send_take_profit_alert.assert_not_called()
         # Operator gets an error alert instead
         cast(AsyncMock, bot.ctx.alerter).send_error.assert_awaited()
 
@@ -1573,8 +1574,8 @@ class TestClosePosition:
         assert "EUR/USD" not in bot.ctx.ig_deal_ids
         assert "EUR/USD" not in bot.ctx.tp_manager._positions
         alerter = cast(AsyncMock, bot.ctx.alerter)
-        alerter.alert_take_profit.assert_awaited()
-        assert alerter.alert_take_profit.call_args.args[1] == "reconciled_external_close"
+        alerter.send_take_profit_alert.assert_awaited()
+        assert alerter.send_take_profit_alert.call_args.args[1] == "reconciled_external_close"
         alerter.send_error.assert_not_called()
 
     @pytest.mark.asyncio
@@ -1612,7 +1613,7 @@ class TestClosePosition:
         # No reconcile probe + no alert of any kind
         bot.ctx.ig_client.fetch_positions_raw.assert_not_awaited()
         alerter = cast(AsyncMock, bot.ctx.alerter)
-        alerter.alert_take_profit.assert_not_called()
+        alerter.send_take_profit_alert.assert_not_called()
         alerter.send_error.assert_not_called()
 
     @pytest.mark.asyncio
@@ -1645,9 +1646,9 @@ class TestClosePosition:
         await bot.ctx.closer.reconcile_positions_with_ig()
 
         alerter = cast(AsyncMock, bot.ctx.alerter)
-        alerter.alert_take_profit.assert_awaited()
-        args = alerter.alert_take_profit.call_args.args
-        # alert_take_profit(symbol, reason, entry_display, close_display, pnl_pct, reasoning)
+        alerter.send_take_profit_alert.assert_awaited()
+        args = alerter.send_take_profit_alert.call_args.args
+        # send_take_profit_alert(symbol, reason, entry_display, close_display, pnl_pct, reasoning)
         assert args[0] == "EUR/USD"
         assert args[1] == "reconciled_external_close"
         # close_display = closeLevel / scale = 10800 / 10000 = 1.0800
@@ -1676,8 +1677,8 @@ class TestClosePosition:
         await bot.ctx.closer.reconcile_positions_with_ig()
 
         alerter = cast(AsyncMock, bot.ctx.alerter)
-        alerter.alert_take_profit.assert_awaited()
-        reasoning = alerter.alert_take_profit.call_args.args[5]
+        alerter.send_take_profit_alert.assert_awaited()
+        reasoning = alerter.send_take_profit_alert.call_args.args[5]
         assert "estimated" in reasoning.lower()
 
 
@@ -1901,8 +1902,8 @@ class TestStartupRecovery:
 class TestCandleDispatch:
     @pytest.mark.asyncio
     async def test_candle_with_position_runs_topk_path(self, bot: TradingBot) -> None:
-        """``_process_candle`` must dispatch confirmed candles to
-        ``_process_candle_ig_topk`` when the IG TopK path is active."""
+        """``on_new_candle`` must dispatch confirmed candles to
+        ``_check_exit_and_entry`` when the IG TopK path is active."""
         bot.ctx.state.positions["EUR/USD"] = _make_position("EUR/USD", 1.10)
         bot.ctx.ig_deal_ids["EUR/USD"] = "DEAL_DISPATCH"
         bot.ctx.topk_signals = [_make_signal("EUR/USD", stop_pct=0.005)]
@@ -1916,9 +1917,9 @@ class TestCandleDispatch:
         async def fake_topk(epic: str, price: float, pos: Any) -> None:
             called(epic, price, pos)
 
-        bot.ctx.runner.process_candle_ig_topk = fake_topk  # type: ignore[method-assign,assignment]
+        bot.ctx.runner.check_exit_and_entry = fake_topk  # type: ignore[method-assign,assignment]
 
-        await bot.ctx.runner.process_candle(_candle("EUR/USD", BASE_TS + 5 * HOUR_MS, 1.105))
+        await bot.ctx.runner.on_new_candle(_candle("EUR/USD", BASE_TS + 5 * HOUR_MS, 1.105))
 
         called.assert_called_once()
         assert called.call_args.args[0] == "EUR/USD"
@@ -1993,7 +1994,7 @@ class TestCandleDispatch:
         async def fake_process(c: Any) -> None:
             called(c)
 
-        bot.ctx.runner.process_candle = fake_process  # type: ignore[method-assign,assignment]
+        bot.ctx.runner.on_new_candle = fake_process  # type: ignore[method-assign,assignment]
 
         # Run subscriber in background, then emit one unconfirmed candle
         sub_task = asyncio.create_task(bot.ctx.runner.subscribe_candle_handler())
@@ -2322,7 +2323,7 @@ def eodhd_bot(monkeypatch: pytest.MonkeyPatch, tmp_path: Any) -> Iterator[Tradin
     for _m in (
         "send_topk_rerank",
         "send_trade_alert",
-        "alert_take_profit",
+        "send_take_profit_alert",
         "send_startup",
         "send_shutdown",
         "send_risk_alert",
@@ -2387,7 +2388,7 @@ class TestEodhdStopLossScales:
     async def test_gold_xau_at_entry_does_not_close(self, eodhd_bot: TradingBot) -> None:
         # GLD candle 412.0 → IG spot ~4467 (scale ~10.84). Same price → no loss.
         pos = self._arm(eodhd_bot, "XAU/USD", 412.0)
-        await eodhd_bot.ctx.runner.process_candle_ig_topk("XAU/USD", 412.0, pos)
+        await eodhd_bot.ctx.runner.check_exit_and_entry("XAU/USD", 412.0, pos)
         eodhd_bot.ctx.closer.close_ig_position.assert_not_awaited()
 
     @pytest.mark.asyncio
@@ -2396,26 +2397,26 @@ class TestEodhdStopLossScales:
         # close instantly; with the calibrated 10.84 scale a real 2% GLD drop is a
         # real 2% IG-level loss → breaches the 1% stop.
         pos = self._arm(eodhd_bot, "XAU/USD", 412.0, stop_pct=0.01)
-        await eodhd_bot.ctx.runner.process_candle_ig_topk("XAU/USD", 412.0 * 0.98, pos)
+        await eodhd_bot.ctx.runner.check_exit_and_entry("XAU/USD", 412.0 * 0.98, pos)
         eodhd_bot.ctx.closer.close_ig_position.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_us_share_mo_at_entry_does_not_close(self, eodhd_bot: TradingBot) -> None:
         # MO $45 → IG level 4500 (cents, scale 100). Same price → no loss.
         pos = self._arm(eodhd_bot, "MO", 45.0)
-        await eodhd_bot.ctx.runner.process_candle_ig_topk("MO", 45.0, pos)
+        await eodhd_bot.ctx.runner.check_exit_and_entry("MO", 45.0, pos)
         eodhd_bot.ctx.closer.close_ig_position.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_us_share_mo_breach_triggers_close(self, eodhd_bot: TradingBot) -> None:
         pos = self._arm(eodhd_bot, "MO", 45.0, stop_pct=0.01)
-        await eodhd_bot.ctx.runner.process_candle_ig_topk("MO", 45.0 * 0.97, pos)
+        await eodhd_bot.ctx.runner.check_exit_and_entry("MO", 45.0 * 0.97, pos)
         eodhd_bot.ctx.closer.close_ig_position.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_forex_eurusd_breach_triggers_close(self, eodhd_bot: TradingBot) -> None:
         pos = self._arm(eodhd_bot, "EUR/USD", 1.10, stop_pct=0.005)
-        await eodhd_bot.ctx.runner.process_candle_ig_topk("EUR/USD", 1.10 * 0.99, pos)
+        await eodhd_bot.ctx.runner.check_exit_and_entry("EUR/USD", 1.10 * 0.99, pos)
         eodhd_bot.ctx.closer.close_ig_position.assert_awaited_once()
 
 
@@ -2451,7 +2452,7 @@ class TestEodhdEntryPath:
             )
         )
 
-        await eodhd_bot.ctx.runner.process_candle_ig_topk("XAU/USD", 412.0, None)
+        await eodhd_bot.ctx.runner.check_exit_and_entry("XAU/USD", 412.0, None)
 
         eodhd_bot.ctx.ig_client.place_order.assert_awaited_once()
         order_arg = eodhd_bot.ctx.ig_client.place_order.call_args.args[0]

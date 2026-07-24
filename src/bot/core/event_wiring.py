@@ -73,7 +73,7 @@ class EventWiring:
         bus.subscribe(EVENT_ACCOUNT_UPDATE, self.handle_account_update)
         bus.subscribe(EVENT_MARGIN_BREAKER, self.handle_margin_breaker)
 
-    async def handle_account_update(self, data: Any) -> None:
+    def handle_account_update(self, data: Any) -> None:
         """Forward LS ACCOUNT pushes into RiskManager so the margin circuit
         breakers update in real time."""
         if isinstance(data, AccountUpdate):
@@ -181,7 +181,7 @@ class EventWiring:
                     PositionClosed(symbol=data.symbol, pnl=pnl_for_event),
                 )
 
-    async def handle_position_closed(self, data: Any) -> None:
+    def handle_position_closed(self, data: Any) -> None:
         if isinstance(data, PositionClosed):
             self._ctx.risk_manager.on_position_closed(data.symbol, data.pnl)
 
@@ -189,6 +189,6 @@ class EventWiring:
         if isinstance(data, RiskEvent):
             await self._ctx.alerter.send_risk_alert(data)
 
-    async def handle_shutdown(self, data: Any) -> None:
+    def handle_shutdown(self, data: Any) -> None:
         logger.critical("Risk manager triggered shutdown: %s", data)
         self._ctx.shutdown_event.set()

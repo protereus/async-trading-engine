@@ -469,7 +469,7 @@ class Lifecycle:
                 logger.warning("%d tasks did not finish within %ss", len(pending), SHUTDOWN_TIMEOUT)
 
         # Persist live state
-        ctx.state.risk = ctx.risk_manager.get_state()
+        ctx.state.risk = ctx.risk_manager.snapshot_state()
         if ctx.tp_manager is not None:
             ctx.state.take_profit_state = ctx.tp_manager.snapshot()
         if ctx.topk_scanned:

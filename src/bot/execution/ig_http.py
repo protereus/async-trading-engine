@@ -161,7 +161,7 @@ class IGHttp:
             h["X-SECURITY-TOKEN"] = c._xst
         return h
 
-    async def get(self, path: str, version: str, authenticated: bool) -> dict[str, Any]:
+    async def get(self, path: str, *, version: str, authenticated: bool) -> dict[str, Any]:
         return await self.request("GET", path, version=version, authenticated=authenticated)
 
     async def post(
@@ -182,11 +182,11 @@ class IGHttp:
             idempotent=idempotent,
         )
 
-    async def delete(self, path: str, version: str, authenticated: bool) -> dict[str, Any]:
+    async def delete(self, path: str, *, version: str, authenticated: bool) -> dict[str, Any]:
         return await self.request("DELETE", path, version=version, authenticated=authenticated)
 
     async def delete_with_body(
-        self, path: str, body: dict[str, Any], version: str, authenticated: bool
+        self, path: str, body: dict[str, Any], *, version: str, authenticated: bool
     ) -> dict[str, Any]:
         """DELETE with a JSON body (used by /positions/otc close).
 

@@ -607,7 +607,7 @@ class RiskManager:
     # State persistence
     # ------------------------------------------------------------------
 
-    def get_state(self) -> RiskState:
+    def snapshot_state(self) -> RiskState:
         """Prune expired trade results, then snapshot internal state for
         persistence.
 

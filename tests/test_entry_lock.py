@@ -1,6 +1,6 @@
 """Entry serialisation: concurrent hour-boundary candle handlers must not each
 pass the risk gate on a stale ``_open_positions`` snapshot and overshoot the
-caps. ``process_candle_ig_topk`` holds ``ctx.entry_lock`` across the gate →
+caps. ``check_exit_and_entry`` holds ``ctx.entry_lock`` across the gate →
 place → register critical section, and re-checks selection/position under it."""
 
 from __future__ import annotations
@@ -42,8 +42,8 @@ async def test_entries_serialised_under_entry_lock() -> None:
 
     with patch("bot.strategy.rerank_runner.is_safe_for_entry", return_value=True):
         await asyncio.gather(
-            runner.process_candle_ig_topk("EUR/USD", 1.1, None),
-            runner.process_candle_ig_topk("EUR/USD", 1.1, None),
+            runner.check_exit_and_entry("EUR/USD", 1.1, None),
+            runner.check_exit_and_entry("EUR/USD", 1.1, None),
         )
 
     assert lock_held == [True, True]  # helper always runs under the lock
@@ -66,8 +66,8 @@ async def test_same_epic_second_entry_skipped_when_peer_already_filled() -> None
     runner._attempt_topk_entry = fake_entry  # type: ignore[method-assign]
 
     with patch("bot.strategy.rerank_runner.is_safe_for_entry", return_value=True):
-        await runner.process_candle_ig_topk("EUR/USD", 1.1, None)
-        await runner.process_candle_ig_topk("EUR/USD", 1.1, None)
+        await runner.check_exit_and_entry("EUR/USD", 1.1, None)
+        await runner.check_exit_and_entry("EUR/USD", 1.1, None)
 
     assert calls == ["EUR/USD"]  # second call skipped by the under-lock re-check
 
@@ -88,8 +88,8 @@ async def test_deselected_epic_skipped_under_lock() -> None:
 
     with patch("bot.strategy.rerank_runner.is_safe_for_entry", return_value=True):
         # First runs; it deselects EUR/USD. Second must skip (not selected).
-        await runner.process_candle_ig_topk("EUR/USD", 1.1, None)
+        await runner.check_exit_and_entry("EUR/USD", 1.1, None)
         called = False
-        await runner.process_candle_ig_topk("EUR/USD", 1.1, None)
+        await runner.check_exit_and_entry("EUR/USD", 1.1, None)
 
     assert called is False

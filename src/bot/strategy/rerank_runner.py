@@ -13,8 +13,8 @@ the rerank loop alone is the longest method in the codebase (~230 lines).
   signal_history rows.
 * ``subscribe_candle_handler`` — wires the ``EVENT_NEW_CANDLE`` subscriber
   and parks on the shutdown event.
-* ``process_candle`` — dispatcher invoked on every confirmed candle.
-* ``process_candle_ig_topk`` — per-candle TopK logic: stop-loss check,
+* ``on_new_candle`` — dispatcher invoked on every confirmed candle.
+* ``check_exit_and_entry`` — per-candle TopK logic: stop-loss check,
   take-profit evaluation, fresh-entry placement.
 
 Operates on the shared ``BotContext`` like every collaborator — reads /
@@ -561,12 +561,12 @@ class RerankRunner:
         async def _on_new_candle(data: Any) -> None:
             if not isinstance(data, Candle) or not data.is_confirmed:
                 return
-            await self.process_candle(data)
+            await self.on_new_candle(data)
 
         ctx.event_bus.subscribe(EVENT_NEW_CANDLE, _on_new_candle)
         await ctx.shutdown_event.wait()
 
-    async def process_candle(self, candle: Candle) -> None:
+    async def on_new_candle(self, candle: Candle) -> None:
         """Run per-candle logic (stop-loss + take-profit checks for IG TopK)."""
         ctx = self._ctx
         if not isinstance(candle, Candle):
@@ -579,9 +579,9 @@ class RerankRunner:
         if ctx.topk_strategy is not None:
             if len(candles) < 2:
                 return
-            await self.process_candle_ig_topk(symbol, candle.close, current_position)
+            await self.check_exit_and_entry(symbol, candle.close, current_position)
 
-    async def process_candle_ig_topk(
+    async def check_exit_and_entry(
         self,
         symbol: str,
         current_price: float,

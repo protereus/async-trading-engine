@@ -104,7 +104,7 @@ class TestRiskManagerFSCSIntegration:
         rm.update_equity(50_000.0)
         rm.update_equity(110_000.0)
         # Inspect the persisted risk-event log
-        events = rm.get_state().risk_events
+        events = rm.snapshot_state().risk_events
         fscs_events = [e for e in events if e["event_type"] == "fscs_warn"]
         assert len(fscs_events) == 1
         assert fscs_events[0]["details"]["equity_gbp"] == 110_000.0

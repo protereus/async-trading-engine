@@ -323,7 +323,7 @@ class TelegramAlerter:
 
         return await self.send("\n".join(lines))
 
-    async def alert_take_profit(
+    async def send_take_profit_alert(
         self,
         symbol: str,
         reason: str,

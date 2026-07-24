@@ -156,7 +156,7 @@ class IGCloseManager:
                     sym, pos
                 )
                 try:
-                    await ctx.alerter.alert_take_profit(
+                    await ctx.alerter.send_take_profit_alert(
                         sym,
                         "reconciled_external_close",
                         entry_display,
@@ -341,6 +341,6 @@ class IGCloseManager:
         # close and could even flip the P&L sign).
         scale = ig_quote_scale(symbol)
         pnl_pct = (fill_ig - pos.entry_price) / pos.entry_price * 100
-        await ctx.alerter.alert_take_profit(
+        await ctx.alerter.send_take_profit_alert(
             symbol, reason, pos.entry_price / scale, fill_ig / scale, pnl_pct, reasoning
         )

@@ -391,7 +391,7 @@ class TestDrawdownTracking:
         rm.update_equity(10_000.0)
         rm.update_equity(8_400.0)  # RED (confirm=1) — halted
 
-        state = rm.get_state()
+        state = rm.snapshot_state()
         assert state.trading_halted is True
 
         rm2 = _make_rm(RiskConfig(drawdown_red_confirm_count=1))
@@ -752,7 +752,7 @@ class TestIGTotalRiskGate:
         rm = _make_rm()
         rm.set_risk_budget("EPIC_A", 123.45)
         rm.set_risk_budget("EPIC_B", 67.89)
-        state = rm.get_state()
+        state = rm.snapshot_state()
         assert state.risk_budgets == {"EPIC_A": 123.45, "EPIC_B": 67.89}
 
         rm2 = _make_rm()
@@ -775,7 +775,7 @@ class TestStatePersistence:
         rm._halt_reason = "test"
         rm.update_atr("BTC/USDT", 150.0)
 
-        state = rm.get_state()
+        state = rm.snapshot_state()
 
         rm2 = _make_rm()
         rm2.update_equity(10_000.0)
@@ -794,7 +794,7 @@ class TestStatePersistence:
         rm.update_equity(9_400.0)  # YELLOW
         assert rm.current_drawdown_tier == DrawdownTier.YELLOW
 
-        state = rm.get_state()
+        state = rm.snapshot_state()
 
         rm2 = _make_rm()
         rm2._drawdown._equity = 9_400.0  # must set equity before loading
@@ -806,7 +806,7 @@ class TestStatePersistence:
         rm.update_equity(10_000.0)
         rm._loss_windows._trade_results.append((_NOW_MS - 1000, -300.1))  # daily limit breach
 
-        state = rm.get_state()
+        state = rm.snapshot_state()
 
         rm2 = _make_rm()
         rm2.update_equity(10_000.0)
@@ -820,7 +820,7 @@ class TestStatePersistence:
         rm = _make_rm(RiskConfig(drawdown_red_confirm_count=1))
         rm.update_equity(10_000.0)
         rm.update_equity(8_400.0)  # RED (confirm=1) — sets halt
-        state = rm.get_state()
+        state = rm.snapshot_state()
 
         rm2 = _make_rm(RiskConfig(drawdown_red_confirm_count=1))
         rm2._drawdown._equity = 8_400.0

@@ -187,7 +187,7 @@ class HealthMonitor:
         ctx.state.equity = ctx.risk_manager.equity
         ctx.state.peak_equity = max(ctx.state.peak_equity, ctx.risk_manager.peak_equity)
         ctx.state.pnl_24h = float(risk["pnl_24h"])
-        ctx.state.risk = ctx.risk_manager.get_state()
+        ctx.state.risk = ctx.risk_manager.snapshot_state()
         ctx.state_manager.save(ctx.state)
 
     async def health_check(self) -> None:

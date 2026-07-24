@@ -32,7 +32,8 @@ from __future__ import annotations
 import logging
 from datetime import UTC, datetime
 
-from bot.risk.ig_margin import AssetClass, classify_symbol
+from bot.data.eodhd_symbols import AssetClass
+from bot.risk.ig_margin import classify_symbol
 
 logger = logging.getLogger(__name__)
 
