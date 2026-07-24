@@ -56,6 +56,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+
 class RiskManager:
     """Evaluates every order request against configurable risk rules.
 

@@ -241,10 +241,7 @@ class TakeProfitManager:
             logger.debug("TP breakeven armed: %s stop=%.4f", symbol, state.current_trailing_stop)
 
         # Exit if price crossed any trailing stop level
-        if (
-            state.current_trailing_stop is not None
-            and current_price <= state.current_trailing_stop
-        ):
+        if state.current_trailing_stop is not None and current_price <= state.current_trailing_stop:
             reason = (
                 ExitReason.TRAILING_STOP_RATCHET
                 if state.trail_armed

@@ -695,4 +695,3 @@ class IGClient:
         """Back-compat alias for ``self._http.post`` — kept so existing tests
         that drive ``client._post`` directly still exercise the retry path."""
         return await self._http.post(path, body, version=version, authenticated=authenticated)
-

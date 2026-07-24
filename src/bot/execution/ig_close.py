@@ -178,9 +178,7 @@ class IGCloseManager:
         except Exception:
             logger.exception("IG position reconciliation failed — stop-losses may not close")
 
-    async def close_ig_position(
-        self, symbol: str, current_position: Any
-    ) -> float | bool | None:
+    async def close_ig_position(self, symbol: str, current_position: Any) -> float | bool | None:
         """Close an open IG spread bet position.
 
         Returns:
@@ -238,9 +236,7 @@ class IGCloseManager:
             )
             return False
 
-    async def _resolve_external_close_summary(
-        self, sym: str, pos: Any
-    ) -> tuple[float, float, str]:
+    async def _resolve_external_close_summary(self, sym: str, pos: Any) -> tuple[float, float, str]:
         """Resolve (close_display, pnl_pct, reasoning) for a position purged
         because it's no longer present on IG.
 

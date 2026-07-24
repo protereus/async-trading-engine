@@ -85,9 +85,7 @@ class TestParseSystemdTimestamp:
     def test_parses_via_date_command(self, monkeypatch: pytest.MonkeyPatch) -> None:
         fixed_now = 1_000_000
         monkeypatch.setattr(time, "time", lambda: fixed_now)
-        monkeypatch.setattr(
-            subprocess, "run", _fake_run(stdout=str(fixed_now - 3600) + "\n")
-        )
+        monkeypatch.setattr(subprocess, "run", _fake_run(stdout=str(fixed_now - 3600) + "\n"))
         assert diagnostics._parse_systemd_timestamp("Thu 2026-05-14 08:14:56 UTC") == 3600
 
     def test_date_command_nonzero_returns_none(self, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -329,9 +327,7 @@ class TestJournalctlEvents:
         assert len(out["events"]) == 1
 
     def test_nonzero_returncode_reports_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr(
-            subprocess, "run", _fake_run(returncode=1, stderr="permission denied")
-        )
+        monkeypatch.setattr(subprocess, "run", _fake_run(returncode=1, stderr="permission denied"))
         out = diagnostics.journalctl_events("trading-bot")
         assert out["events"] == []
         assert "permission denied" in out["error"]
@@ -364,9 +360,7 @@ class TestJournalctlErrors:
         assert priorities == {2, 3, 4}
 
     def test_nonzero_returncode_reports_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr(
-            subprocess, "run", _fake_run(returncode=1, stderr="no journal")
-        )
+        monkeypatch.setattr(subprocess, "run", _fake_run(returncode=1, stderr="no journal"))
         out = diagnostics.journalctl_errors("trading-bot")
         assert out["errors"] == []
         assert "no journal" in out["error"]
