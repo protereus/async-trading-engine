@@ -10,6 +10,7 @@ import logging
 import os
 import tempfile
 import time
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import orjson
@@ -37,8 +38,8 @@ class StateManager:
     until manual cleanup.  See the 2026-06-04 ``PermissionError`` incident.
     """
 
-    def __init__(self, state_file: str = "bot_state.json") -> None:
-        self._state_file = state_file
+    def __init__(self, state_file: str | Path = "bot_state.json") -> None:
+        self._state_file = Path(state_file)
 
     def save(self, state: BotState) -> bool:
         """Serialise and atomically write *state* to disk.
@@ -51,7 +52,7 @@ class StateManager:
         data = state.to_dict()
         try:
             raw = orjson.dumps(data, option=orjson.OPT_INDENT_2)
-            target_dir = os.path.dirname(self._state_file) or "."
+            target_dir = self._state_file.parent
             fd, tmp = tempfile.mkstemp(dir=target_dir, prefix=".bot_state.", suffix=".tmp")
             try:
                 # mkstemp forces 0o600; restore the umask-default 0o644 to match
@@ -77,12 +78,12 @@ class StateManager:
 
         Returns None on first run (file not found).
         """
-        if not os.path.exists(self._state_file):
+        if not self._state_file.exists():
             logger.info("No state file found at %s — starting fresh", self._state_file)
             return None
 
         try:
-            with open(self._state_file, "rb") as f:
+            with self._state_file.open("rb") as f:
                 data = orjson.loads(f.read())
 
             state = BotState.from_dict(data)

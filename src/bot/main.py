@@ -15,6 +15,7 @@ import os
 import signal
 import sys
 import time
+from pathlib import Path
 from typing import Any
 
 from bot.config import BotConfig
@@ -58,16 +59,15 @@ SHUTDOWN_TIMEOUT = 10.0  # seconds to wait for tasks to cancel
 class PIDLockManager:
     """Prevents duplicate bot instances by writing a PID file."""
 
-    def __init__(self, pidfile: str = PID_FILE) -> None:
-        self.pidfile = pidfile
+    def __init__(self, pidfile: str | Path = PID_FILE) -> None:
+        self.pidfile = Path(pidfile)
         self._locked = False
 
     def acquire(self) -> bool:
         """Return True if the lock was acquired, False if another instance is running."""
-        if os.path.exists(self.pidfile):
+        if self.pidfile.exists():
             try:
-                with open(self.pidfile) as f:
-                    old_pid = int(f.read().strip())
+                old_pid = int(self.pidfile.read_text().strip())
                 try:
                     os.kill(old_pid, 0)
                     logger.error(
@@ -79,17 +79,16 @@ class PIDLockManager:
                     return False
                 except OSError:
                     logger.warning("Removing stale PID file (PID %d not running)", old_pid)
-                    os.remove(self.pidfile)
+                    self.pidfile.unlink()
             except Exception as exc:
                 logger.warning("Error reading PID file: %s -- removing it", exc)
                 import contextlib
 
                 with contextlib.suppress(FileNotFoundError):
-                    os.remove(self.pidfile)
+                    self.pidfile.unlink()
 
         try:
-            with open(self.pidfile, "w") as f:
-                f.write(str(os.getpid()))
+            self.pidfile.write_text(str(os.getpid()))
             self._locked = True
             logger.info("PID lock acquired: %s (PID %d)", self.pidfile, os.getpid())
             return True
@@ -102,10 +101,9 @@ class PIDLockManager:
         if not self._locked:
             return
         try:
-            with open(self.pidfile) as f:
-                file_pid = int(f.read().strip())
+            file_pid = int(self.pidfile.read_text().strip())
             if file_pid == os.getpid():
-                os.remove(self.pidfile)
+                self.pidfile.unlink()
                 logger.info("PID lock released: %s", self.pidfile)
         except FileNotFoundError:
             pass

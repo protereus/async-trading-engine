@@ -19,6 +19,7 @@ import contextlib
 import logging
 import os
 import tempfile
+from pathlib import Path
 from typing import Any
 
 import orjson
@@ -33,8 +34,8 @@ class RerankStatusWriter:
     using ``os.rename`` keeps the on-disk file consistent regardless.
     """
 
-    def __init__(self, status_file: str = "rerank_status.json") -> None:
-        self._file = status_file
+    def __init__(self, status_file: str | Path = "rerank_status.json") -> None:
+        self._file = Path(status_file)
         self._payload: dict[str, Any] = {
             "in_progress": False,
             "phase": "idle",
@@ -48,7 +49,7 @@ class RerankStatusWriter:
             # Unique temp name (not a fixed ``{file}.tmp``) so a stale/foreign
             # leftover — e.g. a root-owned tmp from a deploy — can't make the
             # write fail with EACCES on every call.  Same scheme as StateManager.
-            target_dir = os.path.dirname(self._file) or "."
+            target_dir = self._file.parent
             fd, tmp = tempfile.mkstemp(dir=target_dir, prefix=".rerank_status.", suffix=".tmp")
             try:
                 # mkstemp forces 0o600; restore the umask-default 0o644 so the
