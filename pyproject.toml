@@ -55,6 +55,15 @@ explicit = true
 [tool.uv.sources]
 torch = [{ index = "pytorch-cpu" }]
 
+# Floors for transitive deps we don't depend on directly but that carry
+# patched CVEs (Dependabot #51, #38-#50): setuptools comes in via torch,
+# pillow via the analysis extra's matplotlib.
+[tool.uv]
+constraint-dependencies = [
+    "setuptools>=83.0.0",  # GHSA-h35f-9h28-mq5c (sdist MANIFEST.in bypass)
+    "pillow>=12.3.0",  # GHSA-jjj6-mw9f-p565 and 12 sibling CVEs, all fixed in 12.3.0
+]
+
 [tool.hatch.build.targets.wheel]
 packages = ["src/bot"]
 
