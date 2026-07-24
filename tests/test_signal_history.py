@@ -20,10 +20,8 @@ from pathlib import Path
 import pytest
 
 from bot.core.models import Candle
-from bot.data import candle_db as _candle_db_mod
 from bot.data.candle_db import CandleDB
-
-_detect_gap_spanned = _candle_db_mod._detect_gap_spanned
+from bot.data.signal_history_store import _detect_gap_spanned
 
 # ---------------------------------------------------------------------------
 # Fixtures

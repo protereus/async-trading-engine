@@ -35,7 +35,7 @@ import numpy as np
 
 from bot.core.event_bus import EVENT_NEW_CANDLE
 from bot.core.models import Candle, Position
-from bot.data.candle_db import SignalHistoryRow
+from bot.data.signal_history_store import SignalHistoryRow
 from bot.execution.ig_convert import apply_sentiment_gate
 from bot.execution.ig_quote_scale import (
     ig_display_price,

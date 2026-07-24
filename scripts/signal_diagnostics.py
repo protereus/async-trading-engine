@@ -71,7 +71,7 @@ except ImportError:
 
 
 def _import_gap_detector() -> Callable[[list[int], int], int]:
-    """Import bot.data.candle_db._detect_gap_spanned with the src/ path fix.
+    """Import bot.data.signal_history_store._detect_gap_spanned with the src/ path fix.
 
     Done at first use so ruff can't strip the import as unused (the script
     is normally run via ``uv run`` which sets sys.path correctly, but the
@@ -79,7 +79,7 @@ def _import_gap_detector() -> Callable[[list[int], int], int]:
     too).
     """
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
-    from bot.data.candle_db import _detect_gap_spanned
+    from bot.data.signal_history_store import _detect_gap_spanned
 
     return _detect_gap_spanned
 
