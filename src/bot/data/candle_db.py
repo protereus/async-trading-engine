@@ -346,7 +346,7 @@ class CandleDB:
         """Return candles in ascending timestamp order.
 
         Args:
-            symbol: Trading pair, e.g. "AVAX/USDT".
+            symbol: Trading pair, e.g. "EUR/USD".
             limit:  If set, return the N most recent candles.
             since:  If set, return only candles with timestamp >= since.
         """

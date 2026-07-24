@@ -105,7 +105,7 @@ def is_market_open(symbol: str, now: datetime | None = None) -> bool:
     or are silently rolled by IG demo).
 
     Args:
-        symbol: Canonical bot symbol (bot_key), e.g. ``"EUR/USD"``, ``"F"``.
+        symbol: Canonical bot symbol (bot_key), e.g. ``"EUR/USD"``, ``"KO"``.
         now:    UTC datetime to check (defaults to ``datetime.now(UTC)``).
 
     Returns:
