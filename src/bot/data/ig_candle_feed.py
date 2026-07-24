@@ -54,7 +54,6 @@ from bot.core.event_bus import EVENT_NEW_CANDLE
 from bot.data.eodhd_symbols import SYMBOL_EPIC_MAP
 from bot.data.ig_candle_aggregator import IG_NATIVE_CANDLE_SYMBOLS, IGCandleAggregator
 from bot.data.ig_history import fetch_ig_hourly_backfill
-from bot.data.ig_ls_connection import _install_ssl_factory
 from bot.trading_hours import is_market_open
 
 if TYPE_CHECKING:
