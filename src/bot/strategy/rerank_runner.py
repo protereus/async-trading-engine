@@ -947,3 +947,7 @@ class RerankRunner:
                 )
         except Exception:
             logger.exception("TopK IG entry failed for %s (epic=%s)", symbol, ig_epic)
+            try:
+                await ctx.alerter.send_error(f"TopK entry failed for {symbol} (epic={ig_epic})")
+            except Exception:
+                logger.exception("Entry-failure alert failed for %s — continuing", symbol)
