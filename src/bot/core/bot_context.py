@@ -44,6 +44,7 @@ if TYPE_CHECKING:
     from bot.data.ig_feed import IGFeed
     from bot.data.store import DataStore
     from bot.data.twelve_data_feed import TwelveDataFeed
+    from bot.execution.entry_executor import EntryExecutor
     from bot.execution.ig_client import IGClient
     from bot.execution.ig_close import IGCloseManager
     from bot.macro.fred import FREDClient
@@ -92,6 +93,7 @@ class BotContext:
     # --- collaborators (late-bound slots; wired by TradingBot.__init__) ---
     health: HealthMonitor = field(init=False)
     closer: IGCloseManager = field(init=False)
+    entry_executor: EntryExecutor = field(init=False)
     runner: RerankRunner = field(init=False)
     events: EventWiring = field(init=False)
     lifecycle: Lifecycle = field(init=False)

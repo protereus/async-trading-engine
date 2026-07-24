@@ -30,6 +30,7 @@ from bot.core.models import (
 )
 from bot.data.candle_db import CandleDB
 from bot.data.store import DataStore
+from bot.execution.entry_executor import EntryExecutor
 from bot.execution.ig_close import IGCloseManager
 from bot.monitoring.health import HealthMonitor
 from bot.monitoring.telegram_alerts import TelegramAlerter
@@ -199,6 +200,7 @@ class TradingBot:
         # the same explicit seam.
         self.ctx.health = HealthMonitor(self.ctx)
         self.ctx.closer = IGCloseManager(self.ctx)
+        self.ctx.entry_executor = EntryExecutor(self.ctx)
         self.ctx.runner = RerankRunner(self.ctx)
         self.ctx.events = EventWiring(self.ctx)
         kronos_progress.set_progress_callback(self._on_kronos_progress)

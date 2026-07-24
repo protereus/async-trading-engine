@@ -11,16 +11,19 @@ from unittest.mock import patch
 
 import pytest
 
+from bot.execution.entry_executor import EntryExecutor
 from bot.strategy.rerank_runner import RerankRunner
 
 
 def _stub_ctx() -> SimpleNamespace:
-    return SimpleNamespace(
+    ctx = SimpleNamespace(
         entry_lock=asyncio.Lock(),
         state=SimpleNamespace(positions={}),
         topk_scanned=True,
         topk_selected={"EUR/USD"},
     )
+    ctx.entry_executor = EntryExecutor(ctx)  # type: ignore[arg-type]
+    return ctx
 
 
 @pytest.mark.asyncio
@@ -38,9 +41,9 @@ async def test_entries_serialised_under_entry_lock() -> None:
         await asyncio.sleep(0.01)  # hold across an await, as the real I/O does
         live["now"] -= 1
 
-    runner._attempt_topk_entry = fake_entry  # type: ignore[method-assign]
+    ctx.entry_executor._attempt_topk_entry = fake_entry  # type: ignore[method-assign]
 
-    with patch("bot.strategy.rerank_runner.is_safe_for_entry", return_value=True):
+    with patch("bot.execution.entry_executor.is_safe_for_entry", return_value=True):
         await asyncio.gather(
             runner.check_exit_and_entry("EUR/USD", 1.1, None),
             runner.check_exit_and_entry("EUR/USD", 1.1, None),
@@ -63,9 +66,9 @@ async def test_same_epic_second_entry_skipped_when_peer_already_filled() -> None
         calls.append(epic)
         ctx.state.positions[epic] = object()  # the fill registers the position
 
-    runner._attempt_topk_entry = fake_entry  # type: ignore[method-assign]
+    ctx.entry_executor._attempt_topk_entry = fake_entry  # type: ignore[method-assign]
 
-    with patch("bot.strategy.rerank_runner.is_safe_for_entry", return_value=True):
+    with patch("bot.execution.entry_executor.is_safe_for_entry", return_value=True):
         await runner.check_exit_and_entry("EUR/USD", 1.1, None)
         await runner.check_exit_and_entry("EUR/USD", 1.1, None)
 
@@ -84,9 +87,9 @@ async def test_deselected_epic_skipped_under_lock() -> None:
         called = True
         ctx.topk_selected.discard(epic)
 
-    runner._attempt_topk_entry = fake_entry  # type: ignore[method-assign]
+    ctx.entry_executor._attempt_topk_entry = fake_entry  # type: ignore[method-assign]
 
-    with patch("bot.strategy.rerank_runner.is_safe_for_entry", return_value=True):
+    with patch("bot.execution.entry_executor.is_safe_for_entry", return_value=True):
         # First runs; it deselects EUR/USD. Second must skip (not selected).
         await runner.check_exit_and_entry("EUR/USD", 1.1, None)
         called = False

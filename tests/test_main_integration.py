@@ -52,10 +52,10 @@ from bot.core.models import (
     Position,
     RiskState,
 )
+from bot.execution.entry_executor import _snap_size_up_to_grid
 from bot.execution.ig_quote_scale import ig_quote_scale as _ig_quote_scale
 from bot.main import TradingBot
 from bot.strategy.kronos_signals import KronosPathSignal
-from bot.strategy.rerank_runner import _snap_size_up_to_grid
 from bot.strategy.take_profit import ExitReason
 from bot.strategy.topk_strategy import AssetSignal
 
@@ -503,7 +503,7 @@ class TestEntryPath:
     async def test_entry_placed_when_selected_and_market_open(
         self, bot: TradingBot, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.setattr("bot.strategy.rerank_runner.is_safe_for_entry", lambda *a, **kw: True)
+        monkeypatch.setattr("bot.execution.entry_executor.is_safe_for_entry", lambda *a, **kw: True)
         bot.ctx.topk_scanned = True
         bot.ctx.topk_selected = ["EUR/USD"]
         bot.ctx.topk_signals = [_make_signal("EUR/USD", stop_pct=0.005)]
@@ -544,7 +544,7 @@ class TestEntryPath:
     ) -> None:
         """regression: the ``path_signal`` kwarg must be wired through
         so that path-aware static TP and time exit can fire."""
-        monkeypatch.setattr("bot.strategy.rerank_runner.is_safe_for_entry", lambda *a, **kw: True)
+        monkeypatch.setattr("bot.execution.entry_executor.is_safe_for_entry", lambda *a, **kw: True)
         bot.ctx.topk_scanned = True
         bot.ctx.topk_selected = ["EUR/USD"]
         bot.ctx.topk_signals = [_make_signal("EUR/USD", stop_pct=0.005)]
@@ -585,7 +585,7 @@ class TestEntryPath:
         the order, which recomputes the tier from peak vs current.  Use a
         peak well above current so the tier stays RED through the recompute.
         """
-        monkeypatch.setattr("bot.strategy.rerank_runner.is_safe_for_entry", lambda *a, **kw: True)
+        monkeypatch.setattr("bot.execution.entry_executor.is_safe_for_entry", lambda *a, **kw: True)
         bot.ctx.topk_scanned = True
         bot.ctx.topk_selected = ["EUR/USD"]
         bot.ctx.topk_signals = [_make_signal("EUR/USD", stop_pct=0.005)]
@@ -603,7 +603,7 @@ class TestEntryPath:
     ) -> None:
         """``confirm_order`` raises after ``place_order`` succeeds → no
         ``_ig_deal_ids`` entry written, no TP-manager registration."""
-        monkeypatch.setattr("bot.strategy.rerank_runner.is_safe_for_entry", lambda *a, **kw: True)
+        monkeypatch.setattr("bot.execution.entry_executor.is_safe_for_entry", lambda *a, **kw: True)
         bot.ctx.topk_scanned = True
         bot.ctx.topk_selected = ["EUR/USD"]
         bot.ctx.topk_signals = [_make_signal("EUR/USD", stop_pct=0.005)]
@@ -632,7 +632,7 @@ class TestEntryPath:
         We force this by giving the IG client an equity of zero so the sizing
         formula produces 0 stake.
         """
-        monkeypatch.setattr("bot.strategy.rerank_runner.is_safe_for_entry", lambda *a, **kw: True)
+        monkeypatch.setattr("bot.execution.entry_executor.is_safe_for_entry", lambda *a, **kw: True)
         bot.ctx.ig_client.fetch_balance = AsyncMock(
             return_value={"equity": 0.0, "margin": 0.0, "balance": 0.0, "open_pnl": 0.0}
         )
@@ -650,11 +650,11 @@ class TestEntryPath:
     ) -> None:
         """A SIZE_INCREMENT reject snaps the stake UP to the next 0.1 £/pt grid
         and retries once; the second attempt fills and registers state."""
-        monkeypatch.setattr("bot.strategy.rerank_runner.is_safe_for_entry", lambda *a, **kw: True)
+        monkeypatch.setattr("bot.execution.entry_executor.is_safe_for_entry", lambda *a, **kw: True)
         # Pin the risk-sized stake to a known off-grid value (0.28 £/pt) so the
         # snap target is deterministic: 0.28 → next 0.1 grid = 0.3.
         monkeypatch.setattr(
-            "bot.strategy.rerank_runner.RiskManager.compute_ig_size", lambda *a, **kw: 0.28
+            "bot.execution.entry_executor.RiskManager.compute_ig_size", lambda *a, **kw: 0.28
         )
         bot.ctx.topk_scanned = True
         bot.ctx.topk_selected = ["EUR/USD"]
@@ -694,7 +694,7 @@ class TestEntryPath:
     ) -> None:
         """SIZE_INCREMENT on a stake already on the 0.1 grid → no pointless
         retry; the slot is left unfilled for the next rerank."""
-        monkeypatch.setattr("bot.strategy.rerank_runner.is_safe_for_entry", lambda *a, **kw: True)
+        monkeypatch.setattr("bot.execution.entry_executor.is_safe_for_entry", lambda *a, **kw: True)
         # min deal size forces the stake to land exactly on a grid point (0.3)
         # via the min-deal-size floor check before placement.
         bot.ctx.ig_client.require_tradeable = AsyncMock(return_value=0.3)
@@ -704,7 +704,7 @@ class TestEntryPath:
 
         # Patch sizing so final_size is exactly 0.3 (on the grid).
         monkeypatch.setattr(
-            "bot.strategy.rerank_runner.RiskManager.compute_ig_size", lambda *a, **kw: 0.3
+            "bot.execution.entry_executor.RiskManager.compute_ig_size", lambda *a, **kw: 0.3
         )
 
         bot.ctx.ig_client.place_order = AsyncMock(
@@ -2427,7 +2427,7 @@ class TestEodhdEntryPath:
     ) -> None:
         # A selected gold signal must place an order against the EODHD EPIC
         # (CS.D.USCGC.TODAY.IP), proving the eodhd EPIC map is wired into entry.
-        monkeypatch.setattr("bot.strategy.rerank_runner.is_safe_for_entry", lambda *a, **kw: True)
+        monkeypatch.setattr("bot.execution.entry_executor.is_safe_for_entry", lambda *a, **kw: True)
         eodhd_bot.ctx.topk_scanned = True
         eodhd_bot.ctx.topk_selected = ["XAU/USD"]
         eodhd_bot.ctx.topk_signals = [_make_signal("XAU/USD", stop_pct=0.01)]
