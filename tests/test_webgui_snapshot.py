@@ -20,7 +20,25 @@ from pathlib import Path
 
 import pytest
 
+import webgui.data as webgui_data
 from webgui.data import DashboardData
+
+
+@pytest.fixture(autouse=True)
+def _no_live_journalctl(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Isolate every ``.snapshot()`` call in this file from the real host.
+
+    ``DashboardData.snapshot()`` falls back to ``rerank_progress(unit)``
+    whenever ``rerank_status()`` returns None (i.e. whenever the fixture's
+    ``rerank_status.json`` has ``in_progress: False`` or is absent), and
+    ``rerank_progress`` shells out to the real ``journalctl -u trading-bot``
+    with no mock. On a host that happens to run an actual ``trading-bot``
+    systemd unit (as this dev box does), that picks up genuine live Kronos
+    progress lines instead of the deterministic ``None`` tests expect —
+    see the 2026-07-24 investigation of a live-journal-coupled failure in
+    ``TestNextRerankCountdown``.
+    """
+    monkeypatch.setattr(webgui_data, "rerank_progress", lambda unit: None)
 
 
 @pytest.fixture()
