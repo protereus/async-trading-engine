@@ -24,35 +24,18 @@ from __future__ import annotations
 
 from bot.data.eodhd_symbols import EODHD_UNIVERSE
 
-# Candle symbol → sector name.
-# Grouping rationale:
+# Candle symbol → sector name, derived from EODHD_UNIVERSE (the live
+# universe's single source of truth) so this can't drift out of sync with
+# eodhd_symbols.py's own sector assignment the way a hand-duplicated table
+# could. Grouping rationale (see eodhd_symbols._fx_sector):
 #   fx_usd          — pairs with USD as one of the two legs (shared USD beta)
 #   fx_eur_cross    — EUR-base crosses without USD (shared EUR beta)
 #   fx_gbp_cross    — GBP-base crosses without USD/EUR (shared GBP beta)
 #   fx_jpy_cross    — JPY-quoted crosses without USD/EUR/GBP (shared JPY beta)
 #   metals          — XAU + silver
-# Single-name US shares carry their own per-name sector via EODHD_UNIVERSE.
-SECTOR_MAP: dict[str, str] = {
-    # FX USD pairs (one leg is USD)
-    "EUR/USD": "fx_usd",
-    "GBP/USD": "fx_usd",
-    "USD/JPY": "fx_usd",
-    "USD/CHF": "fx_usd",
-    "USD/CAD": "fx_usd",
-    "AUD/USD": "fx_usd",
-    "NZD/USD": "fx_usd",
-    # FX EUR crosses (no USD)
-    "EUR/GBP": "fx_eur_cross",
-    "EUR/JPY": "fx_eur_cross",
-    "EUR/AUD": "fx_eur_cross",
-    # FX GBP crosses (no USD, no EUR-base)
-    "GBP/JPY": "fx_gbp_cross",
-    # FX JPY-quoted crosses (no USD/EUR/GBP base)
-    "AUD/JPY": "fx_jpy_cross",
-    # Precious metals
-    "XAU/USD": "metals",
-    "XAG/USD": "metals",
-}
+# Single-name US shares carry their own per-name sector via EODHD_UNIVERSE too
+# (included here so SECTOR_MAP is a complete live-universe lookup).
+SECTOR_MAP: dict[str, str] = {s.bot_key: s.sector for s in EODHD_UNIVERSE.values()}
 
 # Inverse map: IG EPIC → candle symbol, built once at import from the live EODHD
 # universe.  The risk manager keys open positions by EPIC, so we accept either
@@ -75,15 +58,10 @@ def sector_for(key: str) -> str:
     """
     if key in SECTOR_MAP:
         return SECTOR_MAP[key]
-    # EODHD universe carries its own sector (incl. the per-name equity buckets).
-    eodhd = EODHD_UNIVERSE.get(key)
-    if eodhd is not None:
-        return eodhd.sector
+    # Not a candle symbol — try resolving as an IG EPIC instead. SECTOR_MAP
+    # and _EPIC_TO_SYMBOL are both built from EODHD_UNIVERSE, so any epic
+    # that resolves here is guaranteed a SECTOR_MAP entry too.
     candle_sym = _EPIC_TO_SYMBOL.get(key)
-    if candle_sym is not None and candle_sym in SECTOR_MAP:
-        return SECTOR_MAP[candle_sym]
-    # Also resolve an IG EPIC for an EODHD symbol → its sector.
-    for s in EODHD_UNIVERSE.values():
-        if s.ig_epic == key:
-            return s.sector
+    if candle_sym is not None:
+        return SECTOR_MAP.get(candle_sym, OTHER_SECTOR)
     return OTHER_SECTOR

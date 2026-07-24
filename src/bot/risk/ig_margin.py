@@ -35,7 +35,7 @@ If we ever scale past that we revisit; for now the flat Tier-1 rates suffice.
 
 from __future__ import annotations
 
-from bot.data.eodhd_symbols import EODHD_UNIVERSE, AssetClass
+from bot.data.eodhd_symbols import EODHD_UNIVERSE, FX_MAJORS, AssetClass
 
 # Retail margin floors per IG_LIVE_RISK_REFERENCE.md §4.1.
 MARGIN_RATES: dict[AssetClass, float] = {
@@ -82,21 +82,29 @@ GUARANTEED_STOP_PREMIUM_PCT: dict[AssetClass, float] = {
 # XAU/USD).  EODHD-universe symbols (incl. the 14 US shares + XAG) are classified
 # via ``EODHD_UNIVERSE`` first (see ``classify_symbol``); this table only catches
 # the warm-standby path, whose symbols are a subset of the EODHD universe.
+# Major/minor split is derived from ``eodhd_symbols.FX_MAJORS`` (the same
+# table EODHD_UNIVERSE entries use) rather than hand-duplicated here, so the
+# two can't drift out of sync.
+_TWELVEDATA_FX_SYMBOLS: frozenset[str] = frozenset(
+    {
+        "EUR/USD",
+        "GBP/USD",
+        "USD/JPY",
+        "USD/CHF",
+        "USD/CAD",
+        "AUD/USD",
+        "NZD/USD",
+        "EUR/GBP",
+        "EUR/JPY",
+        "GBP/JPY",
+        "EUR/AUD",
+        "AUD/JPY",
+    }
+)
 _SYMBOL_ASSET_CLASS: dict[str, AssetClass] = {
-    # --- Forex majors (IG counts these as "major" for retail margin) ---
-    "EUR/USD": AssetClass.FOREX_MAJOR,
-    "GBP/USD": AssetClass.FOREX_MAJOR,
-    "USD/JPY": AssetClass.FOREX_MAJOR,
-    "USD/CHF": AssetClass.FOREX_MAJOR,
-    "USD/CAD": AssetClass.FOREX_MAJOR,
-    "AUD/USD": AssetClass.FOREX_MAJOR,
-    "NZD/USD": AssetClass.FOREX_MAJOR,
-    "EUR/GBP": AssetClass.FOREX_MAJOR,
-    "EUR/JPY": AssetClass.FOREX_MAJOR,
-    "GBP/JPY": AssetClass.FOREX_MAJOR,
-    # --- Forex minors ---
-    "EUR/AUD": AssetClass.FOREX_MINOR,
-    "AUD/JPY": AssetClass.FOREX_MINOR,
+    sym: (AssetClass.FOREX_MAJOR if sym in FX_MAJORS else AssetClass.FOREX_MINOR)
+    for sym in _TWELVEDATA_FX_SYMBOLS
+} | {
     # --- Metals ---
     "XAU/USD": AssetClass.SPOT_GOLD,
 }

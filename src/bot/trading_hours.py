@@ -1,16 +1,17 @@
-"""Trading hours guard for the live EODHD 28-asset universe.
+"""Trading hours guard for the live EODHD universe.
 
 All schedules are expressed in UTC.  IG follows fixed UTC schedules; they do NOT
 shift with BST/DST for most instruments (the London-time appearance of shifting is
 because IG quotes UTC open/close times that happen to look like London clock times
 in winter).
 
-Asset categories and their IG spread-bet trading windows (UTC):
+Asset categories and their IG spread-bet trading windows (UTC) — the symbol
+set for each category is derived from EODHD_UNIVERSE, not hardcoded here:
 
-  FOREX (12 pairs)  — 24/5, Sun 21:00 – Fri 21:00, no daily break
+  FOREX             — 24/5, Sun 21:00 – Fri 21:00, no daily break
   METALS (XAU/USD, XAG/USD)
                     — 24/5, Sun 23:00 – Fri 22:00, daily maintenance 22:00–23:00 UTC
-  US_EQUITY (14 single-name shares)
+  US_EQUITY (single-name shares)
                     — Mon–Fri 14:30–21:00 UTC (NYSE cash hours only),
                       excluding NYSE full-day holidays (see _US_EQUITY_HOLIDAYS)
 
@@ -21,50 +22,26 @@ from __future__ import annotations
 
 from datetime import UTC, date, datetime, timedelta
 
+from bot.data.eodhd_symbols import EODHD_UNIVERSE
+
 # ---------------------------------------------------------------------------
 # Asset classification
 # ---------------------------------------------------------------------------
 
-_FOREX = frozenset(
-    [
-        "EUR/USD",
-        "GBP/USD",
-        "USD/JPY",
-        "USD/CHF",
-        "USD/CAD",
-        "AUD/USD",
-        "NZD/USD",
-        "EUR/GBP",
-        "EUR/JPY",
-        "EUR/AUD",
-        "GBP/JPY",
-        "AUD/JPY",
-    ]
-)
+# Derived from EODHD_UNIVERSE (the live universe's single source of truth) by
+# asset_class, so a universe change can't drift out of sync with a
+# hand-maintained parallel list the way the old hardcoded frozensets did.
+# is_market_open fails open for unknown symbols (24/7), so a pair missing
+# from EODHD_UNIVERSE is treated as tradeable on weekends — pinned by
+# tests/test_trading_hours.py::TestUniverseCoverage.
+_FOREX = frozenset(s.bot_key for s in EODHD_UNIVERSE.values() if s.asset_class == "forex")
 
 # Metals are IG-native since 2026-06-19 (IGCandleLSFeed streams IG spot 24/5),
 # so the lenient 24/5 window here is correct for both entries and closes.
-_METALS = frozenset(["XAU/USD", "XAG/USD"])
+_METALS = frozenset(s.bot_key for s in EODHD_UNIVERSE.values() if s.asset_class == "metal")
 
-# 14 US single-name shares on the IG US-share DFB; NYSE RTH window.
-_US_EQUITY = frozenset(
-    [
-        "F",
-        "T",
-        "PFE",
-        "VZ",
-        "NKE",
-        "BAC",
-        "BMY",
-        "MO",
-        "KO",
-        "WFC",
-        "CVS",
-        "INTC",
-        "CSCO",
-        "XOM",
-    ]
-)
+# US single-name shares on the IG US-share DFB; NYSE RTH window.
+_US_EQUITY = frozenset(s.bot_key for s in EODHD_UNIVERSE.values() if s.asset_class == "equity")
 
 # NYSE full-day closures (UTC dates).  The US-share/ETF instruments on IG follow
 # the NYSE calendar, and EODHD sources their ticks from US venues — so on these

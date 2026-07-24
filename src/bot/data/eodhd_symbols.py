@@ -56,9 +56,11 @@ class AssetClass(StrEnum):
     EQUITY_ETF = "equity_etf"  # only if traded as direct equity, not index DFB
 
 
-# Pairs IG counts as "major" for retail margin (3.33 %); the rest are minors (5 %).
-# Mirrors ``ig_margin._SYMBOL_ASSET_CLASS`` so the two never disagree.
-_FX_MAJORS: frozenset[str] = frozenset(
+# Pairs IG counts as "major" for retail margin (3.33 %); the rest are minors
+# (5 %). Public (no leading underscore) — ``bot.risk.ig_margin`` imports this
+# directly for its twelvedata-warm-standby fallback table instead of keeping
+# its own hand-maintained copy.
+FX_MAJORS: frozenset[str] = frozenset(
     {
         "EUR/USD",
         "GBP/USD",
@@ -112,7 +114,7 @@ def _fx(bot_key: str, ig_epic: str) -> EODHDSymbol:
         has_volume=False,
         # JPY-quoted pairs are 2dp (pip 0.01); all others 4dp (pip 0.0001).
         ig_pip_value=0.01 if bot_key.endswith("/JPY") else 0.0001,
-        ig_margin_class=AssetClass.FOREX_MAJOR if bot_key in _FX_MAJORS else AssetClass.FOREX_MINOR,
+        ig_margin_class=AssetClass.FOREX_MAJOR if bot_key in FX_MAJORS else AssetClass.FOREX_MINOR,
         sector=_fx_sector(bot_key),
     )
 
@@ -204,6 +206,13 @@ _EQUITIES = [
     _eq("XOM", "SH.D.XOM.DAILY.IP", "equity_energy"),  # Exxon
 ]
 
+# NOTE: despite the module/file name, this is the canonical cross-broker
+# registry — bot_key/EPIC/pip/margin-class/sector for every live symbol —
+# consumed well beyond the EODHD feed itself (risk/, execution/, strategy/,
+# sentiment/, webgui/). Rehome to a vendor-neutral module (e.g. data/universe.py)
+# once the TwelveData rollback path is retired; until then, EODHD-specific
+# fields (eodhd_rest, ws_endpoint) simply sit alongside the broker-agnostic
+# ones on the same EODHDSymbol record.
 EODHD_UNIVERSE: dict[str, EODHDSymbol] = {s.bot_key: s for s in (*_FX, *_METALS, *_EQUITIES)}
 
 # Compatibility shim: main.py reads SYMBOL_EPIC_MAP to build _candle_symbols /
