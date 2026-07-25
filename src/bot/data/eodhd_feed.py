@@ -447,6 +447,7 @@ class EODHDFeed:
             try:
                 ts_ms = int(ts) * 1000
             except (TypeError, ValueError):
+                logger.debug("EODHD: gap repair skipped bar with unparseable timestamp: %r", ts)
                 continue
             by_ts[ts_ms] = b
             newest_ms = max(newest_ms, ts_ms)
@@ -551,6 +552,7 @@ class EODHDFeed:
         try:
             d = orjson.loads(raw)
         except Exception:
+            logger.debug("EODHD WS[%s]: dropped unparseable frame: %.200s", endpoint, raw)
             return
         if not isinstance(d, dict) or "t" not in d or "s" not in d:
             return  # status/ack frame
@@ -573,6 +575,7 @@ class EODHDFeed:
         try:
             utm_ms = int(d["t"])
         except (TypeError, ValueError):
+            logger.debug("EODHD WS[%s]: unparseable timestamp in frame: %.200s", endpoint, raw)
             return
         self._aggregator.ingest_tick(
             bot_key, utm_ms, price, market_open=self._market_open(bot_key), ltv=ltv
