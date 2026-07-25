@@ -49,6 +49,7 @@ from bot.data.eodhd_symbols import (
     bot_key_for_ws,
 )
 from bot.data.ig_candle_aggregator import IG_NATIVE_CANDLE_SYMBOLS, IGCandleAggregator
+from bot.data.store import warm_store_from_db
 from bot.trading_hours import is_market_open, last_expected_closed_bar_ms
 
 if TYPE_CHECKING:
@@ -248,16 +249,12 @@ class EODHDFeed:
         """Pre-populate the in-memory store from the local CandleDB."""
         if self._candle_db is None:
             return
-        limit = self._config.candle_buffer_size
-        total = 0
-        for sym in self._symbols:
-            for c in self._candle_db.get_candles(sym.bot_key, limit=limit):
-                self._store.add_candle(c)
-                total += 1
-        logger.info(
-            "EODHD: warmed store from DB — %d candles across %d symbols",
-            total,
-            len(self._symbols),
+        warm_store_from_db(
+            self._store,
+            self._candle_db,
+            (sym.bot_key for sym in self._symbols),
+            limit=self._config.candle_buffer_size,
+            label="EODHD",
         )
 
     async def _backfill_below_threshold(self) -> None:

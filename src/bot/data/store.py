@@ -4,8 +4,13 @@ from __future__ import annotations
 
 import logging
 from collections import deque
+from collections.abc import Iterable
+from typing import TYPE_CHECKING
 
 from bot.core.models import Candle
+
+if TYPE_CHECKING:
+    from bot.data.candle_db import CandleDB
 
 logger = logging.getLogger(__name__)
 
@@ -82,3 +87,33 @@ class DataStore:
         """Return the number of candles buffered for *symbol*."""
         buf = self._candles.get(symbol)
         return len(buf) if buf else 0
+
+
+def warm_store_from_db(
+    store: DataStore,
+    candle_db: CandleDB,
+    symbols: Iterable[str],
+    *,
+    limit: int,
+    label: str,
+) -> int:
+    """Pre-populate *store* from *candle_db* for each bot_key in *symbols*.
+
+    Shared by EODHDFeed / TwelveDataFeed / IGCandleLSFeed so a bot restart
+    doesn't re-fetch data that was already persisted to disk. Returns the
+    total candle count loaded and logs a one-line summary prefixed with
+    *label*.
+    """
+    symbol_list = list(symbols)
+    total = 0
+    for sym in symbol_list:
+        for c in candle_db.get_candles(sym, limit=limit):
+            store.add_candle(c)
+            total += 1
+    logger.info(
+        "%s: warmed store from DB — %d candles across %d symbols",
+        label,
+        total,
+        len(symbol_list),
+    )
+    return total

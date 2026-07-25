@@ -54,6 +54,7 @@ from bot.core.event_bus import EVENT_NEW_CANDLE
 from bot.data.eodhd_symbols import SYMBOL_EPIC_MAP
 from bot.data.ig_candle_aggregator import IG_NATIVE_CANDLE_SYMBOLS, IGCandleAggregator
 from bot.data.ig_history import fetch_ig_hourly_backfill
+from bot.data.store import warm_store_from_db
 from bot.trading_hours import is_market_open
 
 if TYPE_CHECKING:
@@ -381,22 +382,18 @@ class IGCandleLSFeed:
 
     def _warm_store_from_db(self) -> None:
         """Pre-populate the in-memory store from the local CandleDB.  EODHD
-        excludes metals (they're IG-native), so this feed owns their warm-up —
-        mirrors ``EODHDFeed._warm_store_from_db``.  A single ascending pass into
-        the freshly-constructed (empty) buffer keeps ``add_candle`` happy.
+        excludes metals (they're IG-native), so this feed owns their warm-up.
+        A single ascending pass into the freshly-constructed (empty) buffer
+        keeps ``add_candle`` happy.
         """
         if self._candle_db is None:
             return
-        limit = self._config.candle_buffer_size
-        total = 0
-        for symbol in self._epic_to_symbol.values():
-            for c in self._candle_db.get_candles(symbol, limit=limit):
-                self._store.add_candle(c)
-                total += 1
-        logger.info(
-            "IGCandleLSFeed: warmed store from DB — %d candles across %d symbols",
-            total,
-            len(self._epic_to_symbol),
+        warm_store_from_db(
+            self._store,
+            self._candle_db,
+            self._epic_to_symbol.values(),
+            limit=self._config.candle_buffer_size,
+            label="IGCandleLSFeed",
         )
 
     # ------------------------------------------------------------------

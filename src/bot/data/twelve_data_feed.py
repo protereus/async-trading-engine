@@ -46,6 +46,7 @@ from bot.core.event_bus import EVENT_NEW_CANDLE
 from bot.core.models import Candle
 from bot.data.backfill import needs_backfill
 from bot.data.ig_candle_aggregator import IG_NATIVE_CANDLE_SYMBOLS
+from bot.data.store import warm_store_from_db
 
 if TYPE_CHECKING:
     from bot.config import BotConfig
@@ -282,17 +283,12 @@ class TwelveDataFeed:
         """
         if self._candle_db is None:
             return
-        limit = self._config.candle_buffer_size
-        total = 0
-        for sym in self._symbols:
-            candles = self._candle_db.get_candles(sym, limit=limit)
-            for c in candles:
-                self._store.add_candle(c)
-            total += len(candles)
-        logger.info(
-            "Twelve Data: warmed store from DB — %d candles across %d symbols",
-            total,
-            len(self._symbols),
+        warm_store_from_db(
+            self._store,
+            self._candle_db,
+            self._symbols,
+            limit=self._config.candle_buffer_size,
+            label="Twelve Data",
         )
 
     async def run(self) -> None:
