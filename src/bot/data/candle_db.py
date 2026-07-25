@@ -222,9 +222,7 @@ class CandleDB:
     def get_candle_count(self, symbol: str) -> int:
         """Return the number of stored candles for *symbol*."""
         conn = _require(self._conn)
-        row = conn.execute(
-            "SELECT COUNT(*) FROM candles WHERE symbol = ?", (symbol,)
-        ).fetchone()
+        row = conn.execute("SELECT COUNT(*) FROM candles WHERE symbol = ?", (symbol,)).fetchone()
         return int(row[0]) if row else 0
 
     # ------------------------------------------------------------------

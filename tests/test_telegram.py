@@ -374,9 +374,7 @@ class TestTopKRerank:
 
         sigs = [self._fake_signal("EUR/USD", 0.03), self._fake_signal("GBP/USD", 0.02)]
         bumped = [("GBP/USD", "EUR/USD", 0.78)]
-        await alerter.send_topk_rerank(
-            RerankAlertSnapshot(sigs, ["EUR/USD"], 3, bumped=bumped)
-        )
+        await alerter.send_topk_rerank(RerankAlertSnapshot(sigs, ["EUR/USD"], 3, bumped=bumped))
 
         assert len(captured) == 1
         msg = captured[0]
