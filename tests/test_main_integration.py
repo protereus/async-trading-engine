@@ -999,9 +999,9 @@ class TestRerankLoop:
         await bot.ctx.runner.topk_rerank_loop()
 
         cast(AsyncMock, bot.ctx.alerter).send_topk_rerank.assert_awaited()
-        kwargs = cast(AsyncMock, bot.ctx.alerter).send_topk_rerank.call_args.kwargs
-        assert kwargs["bumped"] is not None
-        bumped_syms = [t[0] for t in kwargs["bumped"]]
+        snapshot = cast(AsyncMock, bot.ctx.alerter).send_topk_rerank.call_args.args[0]
+        assert snapshot.bumped is not None
+        bumped_syms = [t[0] for t in snapshot.bumped]
         assert "USD/JPY" in bumped_syms
 
     @pytest.mark.asyncio
@@ -1032,8 +1032,8 @@ class TestRerankLoop:
         await bot.ctx.runner.topk_rerank_loop()
 
         cast(AsyncMock, bot.ctx.alerter).send_topk_rerank.assert_awaited()
-        kwargs = cast(AsyncMock, bot.ctx.alerter).send_topk_rerank.call_args.kwargs
-        assert kwargs["equity"] is None
+        snapshot = cast(AsyncMock, bot.ctx.alerter).send_topk_rerank.call_args.args[0]
+        assert snapshot.equity is None
 
     @pytest.mark.asyncio
     async def test_alert_uses_live_position_price_not_candle(self, bot: TradingBot) -> None:
@@ -1059,9 +1059,8 @@ class TestRerankLoop:
 
         await bot.ctx.runner.topk_rerank_loop()
 
-        prices = cast(AsyncMock, bot.ctx.alerter).send_topk_rerank.call_args.kwargs[
-            "current_prices"
-        ]
+        snapshot = cast(AsyncMock, bot.ctx.alerter).send_topk_rerank.call_args.args[0]
+        prices = snapshot.current_prices
         # Display = IG level / scale: live bid 11050 → 1.1050 (not candle 1.0).
         assert prices["EUR/USD"] == pytest.approx(1.1050)
 
@@ -1082,9 +1081,8 @@ class TestRerankLoop:
 
         await bot.ctx.runner.topk_rerank_loop()
 
-        prices = cast(AsyncMock, bot.ctx.alerter).send_topk_rerank.call_args.kwargs[
-            "current_prices"
-        ]
+        snapshot = cast(AsyncMock, bot.ctx.alerter).send_topk_rerank.call_args.args[0]
+        prices = snapshot.current_prices
         # Fallback to the candle: close 1.0 × scale 10000 → display 1.0.
         assert prices["EUR/USD"] == pytest.approx(1.0)
 

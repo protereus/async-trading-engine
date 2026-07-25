@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from bot.core.models import OrderResult, OrderSide, OrderStatus, OrderType, RiskEvent
-from bot.monitoring.telegram_alerts import TelegramAlerter
+from bot.monitoring.telegram_alerts import RerankAlertSnapshot, TelegramAlerter
 
 
 def _html_balanced(msg: str) -> bool:
@@ -374,7 +374,9 @@ class TestTopKRerank:
 
         sigs = [self._fake_signal("EUR/USD", 0.03), self._fake_signal("GBP/USD", 0.02)]
         bumped = [("GBP/USD", "EUR/USD", 0.78)]
-        await alerter.send_topk_rerank(sigs, ["EUR/USD"], 3, bumped=bumped)
+        await alerter.send_topk_rerank(
+            RerankAlertSnapshot(sigs, ["EUR/USD"], 3, bumped=bumped)
+        )
 
         assert len(captured) == 1
         msg = captured[0]
@@ -402,15 +404,21 @@ class TestTopKRerank:
             "XAU/USD": {"entry_price": 500.0, "quantity": 2, "stop_price": 490.0, "stop_pct": 0.02}
         }
         await alerter.send_topk_rerank(
-            sigs,
-            ["XAU/USD"],
-            3,
-            positions=positions,
-            current_prices={"XAU/USD": 505.0},
-            equity=10000.0,
-            risk_summary={"pnl_24h": -5.0, "current_drawdown_pct": 0.03, "drawdown_tier": "YELLOW"},
-            bumped=[("GBP/USD", "EUR/USD", 0.78)],
-            open_market={"XAU/USD": True, "EUR/USD": False, "GBP/USD": False}.__getitem__,
+            RerankAlertSnapshot(
+                sigs,
+                ["XAU/USD"],
+                3,
+                positions=positions,
+                current_prices={"XAU/USD": 505.0},
+                equity=10000.0,
+                risk_summary={
+                    "pnl_24h": -5.0,
+                    "current_drawdown_pct": 0.03,
+                    "drawdown_tier": "YELLOW",
+                },
+                bumped=[("GBP/USD", "EUR/USD", 0.78)],
+                open_market={"XAU/USD": True, "EUR/USD": False, "GBP/USD": False}.__getitem__,
+            )
         )
         msg = captured[0]
         assert "Gold" in msg  # XAU/USD renders via its friendly name
@@ -427,7 +435,7 @@ class TestTopKRerank:
         alerter.send = _fake_send  # type: ignore[method-assign]
 
         sigs = [self._fake_signal("EUR/USD", 0.03)]
-        await alerter.send_topk_rerank(sigs, ["EUR/USD"], 3)
+        await alerter.send_topk_rerank(RerankAlertSnapshot(sigs, ["EUR/USD"], 3))
 
         assert len(captured) == 1
         assert "\U0001f500" not in captured[0]
@@ -443,7 +451,7 @@ class TestTopKRerank:
         alerter.send = _fake_send  # type: ignore[method-assign]
 
         sigs = [self._fake_signal("EUR/USD", 0.03)]
-        await alerter.send_topk_rerank(sigs, ["EUR/USD"], 3, bumped=[])
+        await alerter.send_topk_rerank(RerankAlertSnapshot(sigs, ["EUR/USD"], 3, bumped=[]))
 
         assert "\U0001f500" not in captured[0]
 
@@ -468,10 +476,12 @@ class TestTopKRerank:
         open_market = {"XAU/USD": True, "EUR/USD": False}.__getitem__
 
         await alerter.send_topk_rerank(
-            sigs,
-            ["EUR/USD", "XAU/USD"],  # both "selected" by Kronos
-            3,
-            open_market=open_market,
+            RerankAlertSnapshot(
+                sigs,
+                ["EUR/USD", "XAU/USD"],  # both "selected" by Kronos
+                3,
+                open_market=open_market,
+            )
         )
 
         assert len(captured) == 1
@@ -502,7 +512,7 @@ class TestTopKRerank:
         alerter.send = _fake_send  # type: ignore[method-assign]
 
         sigs = [self._fake_signal("EUR/USD", 0.03)]
-        await alerter.send_topk_rerank(sigs, ["EUR/USD"], 3)
+        await alerter.send_topk_rerank(RerankAlertSnapshot(sigs, ["EUR/USD"], 3))
 
         assert len(captured) == 1
         msg = captured[0]
@@ -526,10 +536,12 @@ class TestTopKRerank:
 
         sigs = [self._fake_signal("EUR/USD", 0.03), self._fake_signal("USD/SEK", 0.01)]
         await alerter.send_topk_rerank(
-            sigs,
-            [],  # nothing selected (e.g. weekend, all candidates market-closed)
-            3,
-            open_market=lambda _sym: False,
+            RerankAlertSnapshot(
+                sigs,
+                [],  # nothing selected (e.g. weekend, all candidates market-closed)
+                3,
+                open_market=lambda _sym: False,
+            )
         )
 
         msg = captured[0]
@@ -574,10 +586,12 @@ class TestRerankPositionsStopColumn:
             }
         }
         await alerter.send_topk_rerank(
-            [self._fake_signal("FTSE", 0.008)],
-            ["FTSE"],
-            3,
-            positions=positions,
+            RerankAlertSnapshot(
+                [self._fake_signal("FTSE", 0.008)],
+                ["FTSE"],
+                3,
+                positions=positions,
+            )
         )
         msg = captured[0]
         # Stop level + percent appear on the position line, both formatted.
@@ -603,10 +617,12 @@ class TestRerankPositionsStopColumn:
             }
         }
         await alerter.send_topk_rerank(
-            [self._fake_signal("FTSE", 0.008)],
-            ["FTSE"],
-            3,
-            positions=positions,
+            RerankAlertSnapshot(
+                [self._fake_signal("FTSE", 0.008)],
+                ["FTSE"],
+                3,
+                positions=positions,
+            )
         )
         msg = captured[0]
         assert "FTSE" in msg

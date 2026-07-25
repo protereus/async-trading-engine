@@ -41,6 +41,7 @@ from bot.execution.ig_quote_scale import (
     ig_display_price,
     ig_quote_scale,
 )
+from bot.monitoring.telegram_alerts import RerankAlertSnapshot
 from bot.strategy import kronos_progress
 from bot.trading_hours import is_market_open, is_safe_for_entry
 
@@ -507,17 +508,19 @@ class RerankRunner:
         # steady-state bump isn't repeated on every alert.
         _bumped = ctx.topk_strategy.material_bumps_if_changed()
         await ctx.alerter.send_topk_rerank(
-            signals,
-            new_selected,
-            ctx.config.topk_k,
-            positions=_display_positions,
-            risk_summary=ctx.risk_manager.get_risk_summary(),
-            current_prices=_cur_prices,
-            equity=_equity_now,
-            cash=_cash_now,
-            open_pnl=_open_pnl_now,
-            bumped=_bumped,
-            open_market=is_safe_for_entry,
+            RerankAlertSnapshot(
+                signals=signals,
+                selected=new_selected,
+                k=ctx.config.topk_k,
+                positions=_display_positions,
+                risk_summary=ctx.risk_manager.get_risk_summary(),
+                current_prices=_cur_prices,
+                equity=_equity_now,
+                cash=_cash_now,
+                open_pnl=_open_pnl_now,
+                bumped=_bumped,
+                open_market=is_safe_for_entry,
+            )
         )
 
     async def signal_resolver_loop(self) -> None:

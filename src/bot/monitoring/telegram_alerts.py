@@ -15,6 +15,7 @@ import html
 import logging
 import time
 from collections.abc import Callable
+from dataclasses import dataclass
 from typing import Any
 
 import aiohttp
@@ -54,6 +55,23 @@ def _h(text: str) -> str:
 def _label(symbol: str) -> str:
     """HTML-safe human-readable label for *symbol*."""
     return _h(_friendly(symbol))
+
+
+@dataclass
+class RerankAlertSnapshot:
+    """Bundles the state ``TelegramAlerter.send_topk_rerank`` renders into one alert."""
+
+    signals: list[Any]
+    selected: list[str]
+    k: int
+    positions: dict[str, dict[str, Any]] | None = None
+    risk_summary: dict[str, Any] | None = None
+    current_prices: dict[str, float] | None = None
+    equity: float | None = None
+    cash: float | None = None
+    open_pnl: float | None = None
+    bumped: list[tuple[str, str, float]] | None = None  # (dropped, blocker, corr)
+    open_market: Callable[[str], bool] | None = None
 
 
 class TelegramAlerter:
@@ -172,33 +190,33 @@ class TelegramAlerter:
         msg = f"\u274c <b>ERROR</b>\n{_h(error[:500])}"
         return await self.send(msg)
 
-    async def send_topk_rerank(
-        self,
-        signals: list[Any],
-        selected: list[str],
-        k: int,
-        *,
-        positions: dict[str, dict[str, Any]] | None = None,
-        risk_summary: dict[str, Any] | None = None,
-        current_prices: dict[str, float] | None = None,
-        equity: float | None = None,
-        cash: float | None = None,
-        open_pnl: float | None = None,
-        bumped: list[tuple[str, str, float]] | None = None,  # (dropped, blocker, corr)
-        open_market: Callable[[str], bool] | None = None,
-    ) -> bool:
+    async def send_topk_rerank(self, snapshot: RerankAlertSnapshot) -> bool:
         """Send TopK rerank result with bot status, open positions, and signal rankings.
 
-        When ``cash`` and ``open_pnl`` are provided alongside ``equity``, the status
-        line shows the three-part IG breakdown (Cash | P&L | Eq) so the displayed
-        figure matches what's visible on the IG.com web platform.
+        When ``snapshot.cash`` and ``snapshot.open_pnl`` are provided alongside
+        ``snapshot.equity``, the status line shows the three-part IG breakdown
+        (Cash | P&L | Eq) so the displayed figure matches what's visible on the
+        IG.com web platform.
 
-        When ``open_market`` is supplied (typically ``trading_hours.is_safe_for_entry``),
-        the tradeable bucket is split into "market-open" (✅/▫️) and "market-closed"
-        (🌙) so the green tick only fires when an entry could actually be placed
-        right now.  Without the callback, the legacy behaviour treats every
-        Kronos-tradeable signal as market-open.
+        When ``snapshot.open_market`` is supplied (typically
+        ``trading_hours.is_safe_for_entry``), the tradeable bucket is split into
+        "market-open" (✅/▫️) and "market-closed" (🌙) so the green tick only
+        fires when an entry could actually be placed right now.  Without the
+        callback, the legacy behaviour treats every Kronos-tradeable signal as
+        market-open.
         """
+        signals = snapshot.signals
+        selected = snapshot.selected
+        k = snapshot.k
+        positions = snapshot.positions
+        risk_summary = snapshot.risk_summary
+        current_prices = snapshot.current_prices
+        equity = snapshot.equity
+        cash = snapshot.cash
+        open_pnl = snapshot.open_pnl
+        bumped = snapshot.bumped
+        open_market = snapshot.open_market
+
         selected_set = set(selected)
         lines = [f"\U0001f504 <b>TopK Rerank \u2014 {len(selected)}/{k} selected</b>"]
 
