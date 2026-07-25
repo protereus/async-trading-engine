@@ -129,3 +129,52 @@ class TestComputeSplit:
         )
 
         assert any("LOW_TRAIN_SAMPLES" in f for f in result.flags)
+
+    def test_split_regions_do_not_leak_across_boundaries(self, tmp_path: Path) -> None:
+        """The no-leakage invariant the module docstring calls safety-critical:
+        0 <= val_start <= test_start <= n_bars, and every train/val/test window's
+        *target* region is strictly confined inside its own split's range -- no
+        window's target bars ever straddle a boundary or land in another split.
+        """
+        csv_path = tmp_path / "EUR_USD.csv"
+        n_rows = 521
+        lookback, predict = 40, 10
+        train_frac, val_frac = 0.7, 0.15
+        _write_csv(csv_path, n_rows=n_rows)
+
+        result = ksplit._compute_split(
+            "EUR/USD",
+            csv_path,
+            lookback=lookback,
+            predict=predict,
+            train_frac=train_frac,
+            val_frac=val_frac,
+            included=True,
+        )
+        val_start, test_start = result.val_start_idx, result.test_start_idx
+
+        assert 0 <= val_start <= test_start <= result.n_bars == n_rows
+
+        train_idx = ksplit.valid_start_indices(n_rows, lookback, predict, 0, val_start)
+        val_idx = ksplit.valid_start_indices(n_rows, lookback, predict, val_start, test_start)
+        test_idx = ksplit.valid_start_indices(n_rows, lookback, predict, test_start, n_rows)
+
+        # Start indices must be disjoint across splits.
+        assert not (set(train_idx) & set(val_idx))
+        assert not (set(val_idx) & set(test_idx))
+        assert not (set(train_idx) & set(test_idx))
+
+        # The actual no-leakage property, checked independently per sample: every
+        # window's *target* region is fully confined to its own split's range.
+        for s in train_idx:
+            assert s + lookback + predict < val_start
+        for s in val_idx:
+            assert val_start <= s + lookback
+            assert s + lookback + predict < test_start
+        for s in test_idx:
+            assert test_start <= s + lookback
+            assert s + lookback + predict < n_rows
+
+        assert result.n_train_samples == len(train_idx)
+        assert result.n_val_samples == len(val_idx)
+        assert result.n_test_samples == len(test_idx)
