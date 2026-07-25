@@ -17,7 +17,6 @@ from __future__ import annotations
 
 import logging
 import sqlite3
-from typing import TypeVar
 
 from bot.core.models import Candle
 from bot.data.correlation_store import CorrelationStore
@@ -26,10 +25,8 @@ from bot.data.signal_history_store import SignalHistoryRecord, SignalHistoryRow,
 
 logger = logging.getLogger(__name__)
 
-_T = TypeVar("_T")
 
-
-def _require(value: _T | None) -> _T:
+def _require[T](value: T | None) -> T:
     """Guard CandleDB's delegator methods against calls before init_db()."""
     if value is None:
         raise RuntimeError("CandleDB.init_db() must be called first")
