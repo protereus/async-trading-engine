@@ -89,6 +89,8 @@ class IGFeed:
         event_bus: Async event bus for publishing candle/trade events.
         config:    Bot configuration (``ig_epics``, ``candle_timeframe``, etc.).
         candle_db: Optional SQLite persistence layer.
+        spread_monitor: Optional ``SpreadMonitor`` for the pre-trade
+            spread-anomaly gate; ``None`` disables it.
     """
 
     def __init__(
