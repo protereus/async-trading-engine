@@ -103,83 +103,105 @@ class IGCloseManager:
                     ctx.ig_deal_ids[candle_sym] = deal_id
                     live_symbols.add(candle_sym)
                     unclaimed_epics.discard(epic)
-                    # Re-seed the risk-manager view: _open_positions is not
-                    # persisted across restarts and on_fill never fires for
-                    # pre-restart positions. Without this, the first SELL
-                    # close after a restart logs "no tracked position" and
-                    # its P&L doesn't roll into consecutive_losses /
-                    # daily_pnl, and max_open_positions briefly under-counts.
-                    ctx.risk_manager.seed_position(epic, ctx.state.positions[candle_sym])
-                    # Re-seed the risk-on budget from the live IG payload.
-                    # IG's GET /positions response normalises stops to
-                    # ``stopLevel`` (absolute price) and leaves
-                    # ``stopDistance`` null even when the order was placed
-                    # with stop_distance, so derive distance from level −
-                    # stopLevel (BUY-only — the bot does not open shorts).
-                    # size is £/pt.  If size or stopLevel is missing the
-                    # position contributes 0 to the cap (safest default
-                    # for stop-less or malformed payloads).
-                    pos_payload = entry.get("position", {})
-                    ig_size = safe_float(pos_payload.get("size"))
-                    ig_level = safe_float(pos_payload.get("level"))
-                    ig_stop_level = safe_float(pos_payload.get("stopLevel"))
-                    if ig_size > 0 and ig_level > 0 and ig_stop_level > 0:
-                        stop_dist_pts = ig_level - ig_stop_level
-                        if stop_dist_pts > 0:
-                            ctx.risk_manager.set_risk_budget(epic, ig_size * stop_dist_pts)
+                    self._reconcile_matched_position(entry, candle_sym)
                     if verbose:
                         logger.info("Reconciled deal ID for %s: %s", candle_sym, deal_id)
                 elif deal_id not in ctx.alerted_orphan_deals:
-                    pos = entry["position"]
-                    logger.warning(
-                        "Orphan IG position: dealId=%s epic=%s dir=%s size=%s level=%s",
-                        deal_id,
-                        epic,
-                        pos.get("direction"),
-                        pos.get("size"),
-                        pos.get("level"),
-                    )
-                    try:
-                        await ctx.alerter.send_error(
-                            f"Untracked IG position: {epic} {pos.get('direction')} "
-                            f"size={pos.get('size')} level={pos.get('level')} "
-                            f"dealId={deal_id} — close via the IG portal or "
-                            "scripts/close_stale_positions.py if unintended"
-                        )
-                    except Exception:
-                        logger.exception("Orphan alert failed for %s — continuing", deal_id)
-                    ctx.alerted_orphan_deals.add(deal_id)
+                    await self._handle_orphan_position(entry)
 
             stale = [s for s in ctx.state.positions if s not in live_symbols]
             for sym in stale:
-                logger.warning("Purging stale position %s (not found on IG)", sym)
-                pos = ctx.state.positions[sym]
-                entry_display = pos.entry_price / ig_quote_scale(sym)
-                close_display, pnl_pct, reasoning = await self._resolve_external_close_summary(
-                    sym, pos
-                )
-                try:
-                    await ctx.alerter.send_take_profit_alert(
-                        sym,
-                        "reconciled_external_close",
-                        entry_display,
-                        close_display,
-                        pnl_pct,
-                        reasoning,
-                    )
-                except Exception:
-                    logger.exception("External-close alert failed for %s — continuing purge", sym)
-                del ctx.state.positions[sym]
-                # _risk_manager._open_positions is keyed by IG EPIC (set in
-                # IGClient via OrderResult.symbol=order.epic), not by the
-                # candle symbol used in _state.positions.
-                ctx.risk_manager.drop_position(ctx.epic_for(sym))
-                ctx.risk_manager.clear_risk_budget(ctx.epic_for(sym))
-                ctx.ig_deal_ids.pop(sym, None)
-                if ctx.tp_manager is not None:
-                    ctx.tp_manager.deregister_position(sym)
+                await self._purge_stale_position(sym)
         except Exception:
             logger.exception("IG position reconciliation failed — stop-losses may not close")
+
+    def _reconcile_matched_position(self, entry: dict[str, Any], candle_sym: str) -> None:
+        """Re-seed risk-manager tracking for a position present both locally and on IG.
+
+        _open_positions is not persisted across restarts and on_fill never
+        fires for pre-restart positions. Without this, the first SELL close
+        after a restart logs "no tracked position" and its P&L doesn't roll
+        into consecutive_losses / daily_pnl, and max_open_positions briefly
+        under-counts.
+        """
+        ctx = self._ctx
+        epic = entry["market"]["epic"]
+        ctx.risk_manager.seed_position(epic, ctx.state.positions[candle_sym])
+        # Re-seed the risk-on budget from the live IG payload. IG's GET
+        # /positions response normalises stops to ``stopLevel`` (absolute
+        # price) and leaves ``stopDistance`` null even when the order was
+        # placed with stop_distance, so derive distance from level −
+        # stopLevel (BUY-only — the bot does not open shorts). size is
+        # £/pt.  If size or stopLevel is missing the position contributes 0
+        # to the cap (safest default for stop-less or malformed payloads).
+        pos_payload = entry.get("position", {})
+        ig_size = safe_float(pos_payload.get("size"))
+        ig_level = safe_float(pos_payload.get("level"))
+        ig_stop_level = safe_float(pos_payload.get("stopLevel"))
+        if ig_size > 0 and ig_level > 0 and ig_stop_level > 0:
+            stop_dist_pts = ig_level - ig_stop_level
+            if stop_dist_pts > 0:
+                ctx.risk_manager.set_risk_budget(epic, ig_size * stop_dist_pts)
+
+    async def _handle_orphan_position(self, entry: dict[str, Any]) -> None:
+        """Log + Telegram-alert an IG position with no matching local record.
+
+        Most commonly created when ``confirm_order`` 404s on
+        ``error.confirms.deal-not-found`` (IG hasn't materialised the confirm
+        yet) but the order actually fills on IG. The bot does NOT auto-close
+        (could conflict with server-side stops) and does NOT auto-adopt (no
+        Kronos signal / TP target to manage it).
+        """
+        ctx = self._ctx
+        epic = entry["market"]["epic"]
+        deal_id = entry["position"]["dealId"]
+        pos = entry["position"]
+        logger.warning(
+            "Orphan IG position: dealId=%s epic=%s dir=%s size=%s level=%s",
+            deal_id,
+            epic,
+            pos.get("direction"),
+            pos.get("size"),
+            pos.get("level"),
+        )
+        try:
+            await ctx.alerter.send_error(
+                f"Untracked IG position: {epic} {pos.get('direction')} "
+                f"size={pos.get('size')} level={pos.get('level')} "
+                f"dealId={deal_id} — close via the IG portal or "
+                "scripts/close_stale_positions.py if unintended"
+            )
+        except Exception:
+            logger.exception("Orphan alert failed for %s — continuing", deal_id)
+        ctx.alerted_orphan_deals.add(deal_id)
+
+    async def _purge_stale_position(self, sym: str) -> None:
+        """Alert on and remove a local position IG no longer reports."""
+        ctx = self._ctx
+        logger.warning("Purging stale position %s (not found on IG)", sym)
+        pos = ctx.state.positions[sym]
+        entry_display = pos.entry_price / ig_quote_scale(sym)
+        close_display, pnl_pct, reasoning = await self._resolve_external_close_summary(sym, pos)
+        try:
+            await ctx.alerter.send_take_profit_alert(
+                sym,
+                "reconciled_external_close",
+                entry_display,
+                close_display,
+                pnl_pct,
+                reasoning,
+            )
+        except Exception:
+            logger.exception("External-close alert failed for %s — continuing purge", sym)
+        del ctx.state.positions[sym]
+        # _risk_manager._open_positions is keyed by IG EPIC (set in
+        # IGClient via OrderResult.symbol=order.epic), not by the candle
+        # symbol used in _state.positions.
+        ctx.risk_manager.drop_position(ctx.epic_for(sym))
+        ctx.risk_manager.clear_risk_budget(ctx.epic_for(sym))
+        ctx.ig_deal_ids.pop(sym, None)
+        if ctx.tp_manager is not None:
+            ctx.tp_manager.deregister_position(sym)
 
     async def close_ig_position(self, symbol: str, current_position: Any) -> float | bool | None:
         """Close an open IG spread bet position.
