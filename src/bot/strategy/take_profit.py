@@ -263,7 +263,7 @@ class TakeProfitManager:
             return None
 
         if state.predicted_mfe_pct is not None:
-            # Phase 9b: path-derived target; fallback is mean_return × fraction
+            # Path-derived target; fallback is mean_return × fraction
             tp_pct = max(
                 stop_pct * self._config.min_rr_multiplier,
                 state.predicted_mfe_pct * self._config.kronos_mfe_capture_fraction,
@@ -294,7 +294,7 @@ class TakeProfitManager:
             return None
 
         if state.predicted_peak_bar is not None:
-            # Phase 9b: exit grace_hours after the predicted price peak
+            # Exit grace_hours after the predicted price peak
             peak_ms = state.opened_at_ms + state.predicted_peak_bar * state.bar_interval_ms
             grace_ms = int(self._config.time_post_peak_grace_hours * 3_600_000)
             deadline_ms = peak_ms + grace_ms
