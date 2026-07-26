@@ -46,7 +46,18 @@ webgui = [
 finbert = [
     # Local ProsusAI/finbert via ONNX runtime — opt-in only (CPU contends
     # with Kronos).  Run `uv sync --extra finbert` to install.
-    "transformers>=4.40",
+    #
+    # transformers is capped below the GHSA-fgcw-684q-jj6r (CVE-2026-5241)
+    # fix version (5.5.0) because optimum-onnx 0.1.0 — the only released
+    # version providing the ONNX runtime backend this module uses — pins
+    # transformers<4.58.0 and has no newer release yet. Not exploitable
+    # here regardless: the vulnerable path is LightGlue model loading with
+    # attacker-controlled trust_remote_code; this module only ever calls
+    # AutoTokenizer/ORTModelForSequenceClassification.from_pretrained on
+    # the hardcoded _MODEL_ID ("ProsusAI/finbert"), never a caller-supplied
+    # repo, and never sets trust_remote_code. Revisit when optimum-onnx
+    # ships a transformers>=5.5 compatible release.
+    "transformers>=4.40,<4.58.0",
     "optimum[onnxruntime]>=1.20",
 ]
 
