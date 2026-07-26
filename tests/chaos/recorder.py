@@ -103,7 +103,7 @@ class ChaosRecorder:
                     fault=s["fault"],
                     det="—" if det is None else f"{det:.1f}",
                     rec="—" if rec is None else f"{rec:.1f}",
-                    ticks=s["counts"].get("ticks_after", 0),
+                    ticks=s["counts"].get("ticks_after", "—"),
                     trips=s["counts"].get("heartbeat_trips", 0),
                     pos="yes" if s["positions"].get("unchanged") else "NO",
                     res="PASS" if s["passed"] else "FAIL",

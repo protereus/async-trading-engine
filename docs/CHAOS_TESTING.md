@@ -72,6 +72,19 @@ identifiers, or raw log lines — there is nothing to sanitise by design):
 - **Host-level chaos** (`iptables` DROP/REJECT, `ss -K`) still exercises the
   OS TCP stack in ways a userspace proxy cannot; §9.1's manual run remains
   the final pre-live gate.
+- **Persistent faults.** The detection-driven scenarios (`silent_stall`,
+  `hard_cut`) clear the injected fault the moment detection fires, so the
+  recovery ladder (tear down → REST re-auth → LS rebuild → re-subscribe)
+  is validated against an *already-restored* network. What these scenarios
+  prove is that the fault is detected and that the feed streams again
+  afterwards — not that recovery survives a network still broken while it
+  runs. Holding the fault across the full ladder, and asserting the retry
+  backoff behaves while it is held, is the next iteration.
+- **Tick-count assertions are weak.** The pass bar for the degradation
+  scenarios is `ticks_after > 0` against a baseline that produced single-digit
+  updates per 30 s on these instruments, so a scenario can pass on one tick.
+  Treat these as smoke-level "did not crash, still streaming" checks rather
+  than throughput measurements.
 - Markets: run against 24/7 instruments (the default epics are crypto) or
   during market hours — a closed, tickless market starves the heartbeat and
   the suite cannot distinguish injected faults from natural silence.

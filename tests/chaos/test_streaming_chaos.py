@@ -199,8 +199,8 @@ async def test_hard_connection_cut_reconnects(
     """
     result = await _run_scenario(
         name="hard_cut",
-        fault="proxy disabled 12s (TCP severed)",
-        params={"disabled_s": 12},
+        fault="proxy disabled until heartbeat detection (TCP severed)",
+        params={"hold": "until_detected"},
         feed=chaos_feed,
         event_log=event_log,
         recorder=recorder,
