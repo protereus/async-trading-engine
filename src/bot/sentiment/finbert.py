@@ -80,9 +80,7 @@ class FinBERTClassifier:
             ) from exc
 
         logger.info("FinBERT: loading %s (ONNX, CPU)", self._model_id)
-        # transformers ships no py.typed marker, so this is only visible as
-        # an untyped call once the optional finbert extra is installed.
-        self._tokenizer = AutoTokenizer.from_pretrained(self._model_id)  # type: ignore[no-untyped-call]
+        self._tokenizer = AutoTokenizer.from_pretrained(self._model_id)
         self._model = ORTModelForSequenceClassification.from_pretrained(self._model_id, export=True)
         self._loaded = True
         logger.info("FinBERT: model loaded")

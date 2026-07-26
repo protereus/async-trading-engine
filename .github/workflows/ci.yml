@@ -44,7 +44,7 @@ jobs:
         with:
           python-version: "3.12"
           enable-cache: true
-      - run: uv sync --extra webgui --extra analysis
+      - run: uv sync --extra webgui
       - run: >
           uv run --with pytest-cov pytest --tb=short -q
           --cov=bot --cov=webgui --cov-report=term-missing:skip-covered
