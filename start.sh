@@ -10,7 +10,7 @@ echo "Downloading the Strand-Rust-Coder model..."
 python3 -m venv hf-env
 source hf-env/bin/activate
 pip install -U "huggingface_hub[cli]"
-huggingface-cli download mradermacher/Strand-Rust-Coder-14B-v1-i1-GGUF --include "*IQ3_XXS.gguf" --local-dir .
+hf download mradermacher/Strand-Rust-Coder-14B-v1-i1-GGUF --include "*IQ3_XXS.gguf" --local-dir .
 deactivate
 cd ..
 
