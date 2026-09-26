@@ -13,9 +13,9 @@ else
 fi
 
 # 2. Low-memory resumable download via wget
-if [ ! -f "Strand-Rust-Coder-14B-v1-i1-IQ3_XXS.gguf" ]; then
+if [ ! -f "Strand-Rust-Coder-14B-v1.i1-IQ3_XXS.gguf" ]; then
     echo "Downloading model directly (low-memory mode)..."
-    wget -c https://huggingface.co/mradermacher/Strand-Rust-Coder-14B-v1-i1-GGUF/resolve/main/Strand-Rust-Coder-14B-v1-i1-IQ3_XXS.gguf
+    wget -c https://huggingface.co/mradermacher/Strand-Rust-Coder-14B-v1-i1-GGUF/resolve/main/Strand-Rust-Coder-14B-v1.i1-IQ3_XXS.gguf
 else
     echo "✓ Model already downloaded. Skipping..."
 fi
