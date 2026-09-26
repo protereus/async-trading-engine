@@ -12,16 +12,10 @@ else
     echo "✓ llama.cpp already built. Skipping..."
 fi
 
-# 2. Resumable model download
-if ! ls *IQ3_XXS.gguf 1> /dev/null 2>&1; then
-    echo "Downloading model (Resumes automatically if interrupted)..."
-    if [ ! -d "hf-env" ]; then
-        python3 -m venv hf-env
-    fi
-    source hf-env/bin/activate
-    pip install -q -U "huggingface_hub[cli]"
-    hf download mradermacher/Strand-Rust-Coder-14B-v1-i1-GGUF --include "*IQ3_XXS.gguf" --local-dir .
-    deactivate
+# 2. Low-memory resumable download via wget
+if [ ! -f "Strand-Rust-Coder-14B-v1-i1-IQ3_XXS.gguf" ]; then
+    echo "Downloading model directly (low-memory mode)..."
+    wget -c https://huggingface.co/mradermacher/Strand-Rust-Coder-14B-v1-i1-GGUF/resolve/main/Strand-Rust-Coder-14B-v1-i1-IQ3_XXS.gguf
 else
     echo "✓ Model already downloaded. Skipping..."
 fi
