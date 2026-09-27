@@ -5,7 +5,9 @@ apt update && apt install -y build-essential cmake git wget python3-venv curl
 
 if [ ! -f "llama.cpp/build/bin/llama-server" ]; then
     echo "Building llama.cpp..."
-    git clone https://github.com/ggerganov/llama.cpp
+    if [ ! -d "llama.cpp" ]; then
+        git clone https://github.com/ggerganov/llama.cpp
+    fi
     cd llama.cpp
     cmake -B build
     cmake --build build -j 4
